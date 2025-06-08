@@ -17,6 +17,7 @@ type Client struct {
 	config    *config.MQTTConfig
 	logger    *utils.Logger
 	parser    *Parser
+	handler   MessageHandler
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
@@ -41,11 +42,12 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 	parser := NewParser(logger)
 	
 	c := &Client{
-		config: cfg,
-		logger: logger,
-		parser: parser,
-		ctx:    ctx,
-		cancel: cancel,
+		config:  cfg,
+		logger:  logger,
+		parser:  parser,
+		handler: handler,
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	// Настройка MQTT клиента
@@ -75,7 +77,7 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 		c.logger.WithField("broker", cfg.URL).Info("Connected to MQTT broker")
 		
 		// Подписка на топик после подключения
-		if token := client.Subscribe(cfg.TopicPrefix, 1, c.messageHandler(handler)); token.Wait() && token.Error() != nil {
+		if token := client.Subscribe(cfg.TopicPrefix, 1, c.messageHandler()); token.Wait() && token.Error() != nil {
 			c.logger.WithFields(map[string]interface{}{
 				"topic": cfg.TopicPrefix,
 				"error": token.Error(),
@@ -155,7 +157,7 @@ func (c *Client) IsConnected() bool {
 }
 
 // messageHandler создает обработчик MQTT сообщений
-func (c *Client) messageHandler(handler MessageHandler) mqtt.MessageHandler {
+func (c *Client) messageHandler() mqtt.MessageHandler {
 	return func(client mqtt.Client, msg mqtt.Message) {
 		c.wg.Add(1)
 		go func() {
@@ -190,19 +192,23 @@ func (c *Client) messageHandler(handler MessageHandler) mqtt.MessageHandler {
 			}
 			
 			// Передаем сообщение обработчику
-			if err := handler(fanetMsg); err != nil {
-				c.logger.WithFields(map[string]interface{}{
-					"topic": topic,
-					"message_type": fanetMsg.Type,
-					"device_id": fanetMsg.DeviceID,
-					"error": err,
-				}).Error("Message handler failed")
+			if c.handler != nil {
+				if err := c.handler(fanetMsg); err != nil {
+					c.logger.WithFields(map[string]interface{}{
+						"topic": topic,
+						"message_type": fanetMsg.Type,
+						"device_id": fanetMsg.DeviceID,
+						"error": err,
+					}).Error("Message handler failed")
+				} else {
+					c.logger.WithFields(map[string]interface{}{
+						"topic": topic,
+						"message_type": fanetMsg.Type,
+						"device_id": fanetMsg.DeviceID,
+					}).Debug("Successfully processed FANET message")
+				}
 			} else {
-				c.logger.WithFields(map[string]interface{}{
-					"topic": topic,
-					"message_type": fanetMsg.Type,
-					"device_id": fanetMsg.DeviceID,
-				}).Debug("Successfully processed FANET message")
+				c.logger.WithField("topic", topic).Warn("Message handler is nil")
 			}
 		}()
 	}

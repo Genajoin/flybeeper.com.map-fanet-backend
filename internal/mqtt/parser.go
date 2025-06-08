@@ -314,12 +314,20 @@ func (p *Parser) parseGroundTracking(data []byte) (*GroundTrackingData, error) {
 		return nil, fmt.Errorf("ground tracking data too short: %d bytes", len(data))
 	}
 	
-	// Аналогично Air tracking, но без climb rate и turn rate
-	latRaw := int32(binary.LittleEndian.Uint32(data[0:3]) << 8) >> 8
-	lonRaw := int32(binary.LittleEndian.Uint32(data[3:6]) << 8) >> 8
+	// Координаты (3 + 3 байта) - аналогично Air tracking
+	// Latitude: deg * 93206.04, signed 24-bit
+	latRaw := int32(data[0]) | int32(data[1])<<8 | int32(data[2])<<16
+	if latRaw&0x800000 != 0 { // Знаковое расширение для 24-bit
+		latRaw |= ^0xFFFFFF
+	}
+	latitude := float64(latRaw) / 93206.04
 	
-	latitude := float64(latRaw) / 93206.0
-	longitude := float64(lonRaw) / 46603.0
+	// Longitude: deg * 46603.02, signed 24-bit
+	lonRaw := int32(data[3]) | int32(data[4])<<8 | int32(data[5])<<16
+	if lonRaw&0x800000 != 0 { // Знаковое расширение для 24-bit
+		lonRaw |= ^0xFFFFFF
+	}
+	longitude := float64(lonRaw) / 46603.02
 	
 	altitude := int32(int16(binary.LittleEndian.Uint16(data[6:8])))
 	

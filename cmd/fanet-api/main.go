@@ -67,22 +67,6 @@ func main() {
 		}
 	}
 
-	// Создаем обработчик MQTT сообщений (сначала объявляем переменную)
-	var messageHandler func(msg *mqtt.FANETMessage) error
-
-	// Инициализируем MQTT клиент
-	mqttClient, err := mqtt.NewClient(&cfg.MQTT, logger, messageHandler)
-	if err != nil {
-		logger.WithField("error", err).Fatal("Failed to initialize MQTT client")
-	}
-	defer mqttClient.Disconnect()
-
-	// Подключаемся к MQTT
-	if err := mqttClient.Connect(); err != nil {
-		logger.WithField("error", err).Fatal("Failed to connect to MQTT broker")
-	}
-	logger.Info("Connected to MQTT broker")
-
 	// Создаем HTTP сервер
 	server := handler.NewServer(cfg, redisRepo, logger)
 
@@ -90,7 +74,7 @@ func main() {
 	wsHandler := server.GetWebSocketHandler()
 
 	// Определяем messageHandler с поддержкой WebSocket трансляции
-	messageHandler = func(msg *mqtt.FANETMessage) error {
+	messageHandler := func(msg *mqtt.FANETMessage) error {
 		// Конвертируем FANET сообщение в модели и сохраняем в Redis
 		switch msg.Type {
 		case 1: // Air tracking
@@ -126,6 +110,19 @@ func main() {
 		}
 		return nil
 	}
+
+	// Инициализируем MQTT клиент с готовым messageHandler
+	mqttClient, err := mqtt.NewClient(&cfg.MQTT, logger, messageHandler)
+	if err != nil {
+		logger.WithField("error", err).Fatal("Failed to initialize MQTT client")
+	}
+	defer mqttClient.Disconnect()
+
+	// Подключаемся к MQTT
+	if err := mqttClient.Connect(); err != nil {
+		logger.WithField("error", err).Fatal("Failed to connect to MQTT broker")
+	}
+	logger.Info("Connected to MQTT broker")
 
 	// Запускаем HTTP сервер в горутине
 	go func() {
