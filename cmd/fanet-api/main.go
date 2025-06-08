@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/flybeeper/fanet-backend/internal/config"
+	"github.com/flybeeper/fanet-backend/internal/handler"
+	"github.com/flybeeper/fanet-backend/internal/models"
+	"github.com/flybeeper/fanet-backend/internal/mqtt"
+	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/pkg/utils"
 )
 
 var (
@@ -26,121 +30,237 @@ func main() {
 	}
 
 	// Инициализируем логирование
-	logger := setupLogger(cfg)
-	logger.Printf("Starting FANET Backend %s", Version)
+	logger := utils.NewLogger("info", "text")
+	logger.WithField("version", Version).Info("Starting FANET Backend")
 
-	// Создаем контекст с отменой
+	// Создаем контекст приложения
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// TODO: Инициализируем Redis
-	// redisClient := redis.NewClient(&redis.Options{...})
+	// Инициализируем Redis репозиторий
+	redisRepo, err := repository.NewRedisRepository(&cfg.Redis, logger)
+	if err != nil {
+		logger.WithField("error", err).Fatal("Failed to initialize Redis repository")
+	}
+	defer redisRepo.Close()
 
-	// TODO: Инициализируем MQTT клиент
-	// mqttClient := mqtt.NewClient(...)
+	// Проверяем соединение с Redis
+	if err := redisRepo.Ping(ctx); err != nil {
+		logger.WithField("error", err).Fatal("Failed to connect to Redis")
+	}
+	logger.Info("Connected to Redis")
 
-	// TODO: Инициализируем сервисы
-	// pilotService := service.NewPilotService(redisClient)
-	// thermalService := service.NewThermalService(redisClient)
-	// stationService := service.NewStationService(redisClient)
-
-	// TODO: Инициализируем handlers
-	// restHandler := handler.NewRESTHandler(...)
-	// wsHandler := handler.NewWebSocketHandler(...)
-
-	// Создаем HTTP сервер
-	mux := http.NewServeMux()
-	
-	// Health check endpoint
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
-
-	// Ready check endpoint
-	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		// TODO: Проверить готовность всех компонентов
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("Ready"))
-	})
-
-	// TODO: Регистрируем API endpoints
-	// mux.HandleFunc("/api/v1/snapshot", restHandler.GetSnapshot)
-	// mux.HandleFunc("/api/v1/pilots", restHandler.GetPilots)
-	// mux.HandleFunc("/api/v1/thermals", restHandler.GetThermals)
-	// mux.HandleFunc("/api/v1/stations", restHandler.GetStations)
-	// mux.HandleFunc("/api/v1/track/", restHandler.GetTrack)
-	// mux.HandleFunc("/api/v1/position", restHandler.PostPosition)
-	// mux.HandleFunc("/ws/v1/updates", wsHandler.Handle)
-
-	// Временный тестовый endpoint
-	mux.HandleFunc("/api/v1/test", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"version":"%s","status":"ok"}`, Version)
-	})
-
-	// Создаем HTTP сервер
-	srv := &http.Server{
-		Addr:         ":" + cfg.Server.Port,
-		Handler:      mux,
-		ReadTimeout:  cfg.Server.ReadTimeout,
-		WriteTimeout: cfg.Server.WriteTimeout,
-		IdleTimeout:  cfg.Server.IdleTimeout,
+	// Инициализируем MySQL репозиторий (опционально)
+	var mysqlRepo *repository.MySQLRepository
+	if cfg.MySQL.DSN != "" {
+		mysqlRepo, err = repository.NewMySQLRepository(&cfg.MySQL, logger)
+		if err != nil {
+			logger.WithField("error", err).Warn("Failed to initialize MySQL repository")
+		} else {
+			defer mysqlRepo.Close()
+			if err := mysqlRepo.Ping(ctx); err != nil {
+				logger.WithField("error", err).Warn("Failed to connect to MySQL")
+			} else {
+				logger.Info("Connected to MySQL")
+			}
+		}
 	}
 
-	// Запускаем сервер в горутине
+	// Создаем обработчик MQTT сообщений
+	messageHandler := func(msg *mqtt.FANETMessage) error {
+		// Конвертируем FANET сообщение в модели и сохраняем в Redis
+		switch msg.Type {
+		case 1: // Air tracking
+			if pilot := convertFANETToPilot(msg); pilot != nil {
+				return redisRepo.SavePilot(ctx, pilot)
+			}
+		case 9: // Thermal
+			if thermal := convertFANETToThermal(msg); thermal != nil {
+				return redisRepo.SaveThermal(ctx, thermal)
+			}
+		case 4: // Weather/Station
+			if station := convertFANETToStation(msg); station != nil {
+				return redisRepo.SaveStation(ctx, station)
+			}
+		}
+		return nil
+	}
+
+	// Инициализируем MQTT клиент
+	mqttClient, err := mqtt.NewClient(&cfg.MQTT, logger, messageHandler)
+	if err != nil {
+		logger.WithField("error", err).Fatal("Failed to initialize MQTT client")
+	}
+	defer mqttClient.Disconnect()
+
+	// Подключаемся к MQTT
+	if err := mqttClient.Connect(); err != nil {
+		logger.WithField("error", err).Fatal("Failed to connect to MQTT broker")
+	}
+	logger.Info("Connected to MQTT broker")
+
+	// Создаем HTTP сервер
+	server := handler.NewServer(cfg, redisRepo, logger)
+
+	// Запускаем HTTP сервер в горутине
 	go func() {
-		logger.Printf("HTTP server listening on :%s", cfg.Server.Port)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("Failed to start server: %v", err)
+		logger.WithField("address", cfg.Server.Address).Info("Starting HTTP/2 server")
+		if err := server.Start(); err != nil {
+			logger.WithField("error", err).Fatal("Failed to start HTTP server")
 		}
 	}()
 
-	// TODO: Запускаем метрики сервер, если включен
-	if cfg.Monitoring.MetricsEnabled {
+	// Загружаем начальные данные из MySQL (если доступен)
+	if mysqlRepo != nil {
 		go func() {
-			metricsServer := &http.Server{
-				Addr:    ":" + cfg.Monitoring.MetricsPort,
-				Handler: http.DefaultServeMux, // Prometheus регистрирует свои handlers глобально
-			}
-			logger.Printf("Metrics server listening on :%s", cfg.Monitoring.MetricsPort)
-			if err := metricsServer.ListenAndServe(); err != nil {
-				logger.Printf("Metrics server error: %v", err)
-			}
+			loadInitialData(ctx, mysqlRepo, redisRepo, logger)
 		}()
 	}
-
-	// TODO: Запускаем MQTT обработчик
-	// go mqttHandler.Start(ctx)
-
-	// TODO: Запускаем фоновые задачи
-	// go backgroundTasks(ctx)
 
 	// Ждем сигнала остановки
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigChan
 
-	logger.Printf("Received signal %v, shutting down...", sig)
+	logger.WithField("signal", sig).Info("Received shutdown signal")
 
 	// Graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer shutdownCancel()
 
+	// Отменяем контекст приложения
+	cancel()
+
 	// Останавливаем HTTP сервер
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("HTTP server shutdown error: %v", err)
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.WithField("error", err).Error("HTTP server shutdown error")
 	}
 
-	// TODO: Закрываем соединения
-	// redisClient.Close()
-	// mqttClient.Disconnect(250)
-
-	logger.Println("Server stopped")
+	logger.Info("Server stopped gracefully")
 }
 
-func setupLogger(cfg *config.Config) *log.Logger {
-	// TODO: Настроить структурированное логирование (например, zerolog или zap)
-	return log.New(os.Stdout, "[FANET] ", log.LstdFlags|log.Lshortfile)
+// loadInitialData загружает начальные данные из MySQL в Redis
+func loadInitialData(ctx context.Context, mysqlRepo *repository.MySQLRepository, redisRepo *repository.RedisRepository, logger *utils.Logger) {
+	logger.Info("Loading initial data from MySQL")
+
+	// Загружаем пилотов
+	pilots, err := mysqlRepo.LoadInitialPilots(ctx, 1000)
+	if err != nil {
+		logger.WithField("error", err).Error("Failed to load initial pilots")
+	} else {
+		for _, pilot := range pilots {
+			if err := redisRepo.SavePilot(ctx, pilot); err != nil {
+				logger.WithField("error", err).WithField("device_id", pilot.DeviceID).Warn("Failed to save pilot to Redis")
+			}
+		}
+		logger.WithField("count", len(pilots)).Info("Loaded initial pilots")
+	}
+
+	// Загружаем термики
+	thermals, err := mysqlRepo.LoadInitialThermals(ctx, 500)
+	if err != nil {
+		logger.WithField("error", err).Error("Failed to load initial thermals")
+	} else {
+		for _, thermal := range thermals {
+			if err := redisRepo.SaveThermal(ctx, thermal); err != nil {
+				logger.WithField("error", err).WithField("thermal_id", thermal.ID).Warn("Failed to save thermal to Redis")
+			}
+		}
+		logger.WithField("count", len(thermals)).Info("Loaded initial thermals")
+	}
+
+	// Загружаем станции
+	stations, err := mysqlRepo.LoadInitialStations(ctx, 100)
+	if err != nil {
+		logger.WithField("error", err).Error("Failed to load initial stations")
+	} else {
+		for _, station := range stations {
+			if err := redisRepo.SaveStation(ctx, station); err != nil {
+				logger.WithField("error", err).WithField("station_id", station.ID).Warn("Failed to save station to Redis")
+			}
+		}
+		logger.WithField("count", len(stations)).Info("Loaded initial stations")
+	}
+
+	logger.Info("Initial data loading completed")
+}
+
+// Конвертеры FANET сообщений в модели данных
+
+func convertFANETToPilot(msg *mqtt.FANETMessage) *models.Pilot {
+	// Получаем данные для Air tracking (Type 1)
+	airData, ok := msg.Data.(*mqtt.AirTrackingData)
+	if !ok {
+		return nil
+	}
+
+	return &models.Pilot{
+		DeviceID:     msg.DeviceID,
+		Name:         "", // Имя приходит в отдельном сообщении Type 2
+		AircraftType: airData.AircraftType,
+		Position: models.GeoPoint{
+			Latitude:  airData.Latitude,
+			Longitude: airData.Longitude,
+			Altitude:  int16(airData.Altitude),
+		},
+		Speed:       airData.Speed,
+		ClimbRate:   airData.ClimbRate,
+		Heading:     airData.Heading,
+		TrackOnline: true, // Факт получения сообщения означает онлайн
+		Battery:     100,  // Нет в FANET Type 1
+		LastUpdate:  msg.Timestamp,
+	}
+}
+
+func convertFANETToThermal(msg *mqtt.FANETMessage) *models.Thermal {
+	// Получаем данные для Thermal (Type 9) 
+	thermalData, ok := msg.Data.(*mqtt.ThermalData)
+	if !ok {
+		return nil
+	}
+
+	return &models.Thermal{
+		ID:         fmt.Sprintf("%s_%d", msg.DeviceID, msg.Timestamp.Unix()),
+		ReportedBy: msg.DeviceID,
+		Center: models.GeoPoint{
+			Latitude:  thermalData.Latitude,
+			Longitude: thermalData.Longitude,
+		},
+		Altitude:      thermalData.Altitude,
+		Quality:       uint8(thermalData.Strength / 20), // Конвертируем 0-100 в 0-5
+		ClimbRate:     thermalData.ClimbRate,
+		WindSpeed:     0,  // Нет в FANET Thermal
+		WindDirection: 0,  // Нет в FANET Thermal
+		Timestamp:     msg.Timestamp,
+	}
+}
+
+func convertFANETToStation(msg *mqtt.FANETMessage) *models.Station {
+	// Получаем данные для Weather service (Type 4)
+	serviceData, ok := msg.Data.(*mqtt.ServiceData)
+	if !ok {
+		return nil
+	}
+
+	weatherData, ok := serviceData.Data.(*mqtt.WeatherData)
+	if !ok {
+		return nil
+	}
+
+	return &models.Station{
+		ID:   msg.DeviceID,
+		Name: "", // Имя приходит в отдельном сообщении Type 2
+		Position: models.GeoPoint{
+			Latitude:  0, // Координаты станции не в FANET Weather
+			Longitude: 0, // Координаты станции не в FANET Weather
+		},
+		Temperature:   weatherData.Temperature,
+		WindSpeed:     weatherData.WindSpeed,
+		WindDirection: weatherData.WindDirection,
+		WindGusts:     0, // Нет в FANET Weather
+		Humidity:      weatherData.Humidity,
+		Pressure:      weatherData.Pressure,
+		Battery:       100, // Нет в FANET Weather
+		LastUpdate:    msg.Timestamp,
+	}
 }

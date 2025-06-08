@@ -8,19 +8,19 @@ import (
 // Station представляет метеостанцию
 type Station struct {
 	// Идентификация
-	Addr uint32 `json:"addr"`           // FANET адрес станции
+	ID   string `json:"id"`             // Device ID станции
 	Name string `json:"name,omitempty"` // Название станции
 
 	// Позиция
 	Position GeoPoint `json:"position"` // Координаты станции
 
 	// Погодные данные
-	Temperature float32 `json:"temperature"`           // Температура (°C)
-	WindSpeed   float32 `json:"wind_speed"`            // Скорость ветра (м/с)
-	WindHeading float32 `json:"wind_heading"`          // Направление ветра (градусы)
-	WindGusts   float32 `json:"wind_gusts,omitempty"`  // Порывы ветра (м/с)
-	Humidity    uint8   `json:"humidity,omitempty"`    // Влажность (%)
-	Pressure    float32 `json:"pressure,omitempty"`    // Давление (гПа)
+	Temperature   int8   `json:"temperature"`            // Температура (°C)
+	WindSpeed     uint8  `json:"wind_speed"`             // Скорость ветра (км/ч)
+	WindDirection uint16 `json:"wind_direction"`         // Направление ветра (градусы)
+	WindGusts     uint8  `json:"wind_gusts,omitempty"`   // Порывы ветра (км/ч)
+	Humidity      uint8  `json:"humidity,omitempty"`     // Влажность (%)
+	Pressure      uint16 `json:"pressure,omitempty"`     // Давление (гПа)
 
 	// Статус
 	Battery    uint8     `json:"battery,omitempty"` // Заряд батареи (%)
@@ -29,8 +29,8 @@ type Station struct {
 
 // Validate проверяет корректность данных станции
 func (s *Station) Validate() error {
-	if s.Addr == 0 {
-		return fmt.Errorf("addr is required")
+	if s.ID == "" {
+		return fmt.Errorf("id is required")
 	}
 
 	if err := s.Position.Validate(); err != nil {
@@ -39,22 +39,22 @@ func (s *Station) Validate() error {
 
 	// Проверка температуры (реалистичные значения)
 	if s.Temperature < -60 || s.Temperature > 60 {
-		return fmt.Errorf("invalid temperature: %f", s.Temperature)
+		return fmt.Errorf("invalid temperature: %d", s.Temperature)
 	}
 
 	// Проверка скорости ветра
 	if s.WindSpeed < 0 || s.WindSpeed > 100 {
-		return fmt.Errorf("invalid wind speed: %f", s.WindSpeed)
+		return fmt.Errorf("invalid wind speed: %d", s.WindSpeed)
 	}
 
 	// Проверка направления ветра
-	if s.WindHeading < 0 || s.WindHeading >= 360 {
-		return fmt.Errorf("invalid wind heading: %f", s.WindHeading)
+	if s.WindDirection >= 360 {
+		return fmt.Errorf("invalid wind direction: %d", s.WindDirection)
 	}
 
 	// Проверка порывов ветра
 	if s.WindGusts < 0 || s.WindGusts > 150 {
-		return fmt.Errorf("invalid wind gusts: %f", s.WindGusts)
+		return fmt.Errorf("invalid wind gusts: %d", s.WindGusts)
 	}
 
 	// Проверка влажности
@@ -64,7 +64,7 @@ func (s *Station) Validate() error {
 
 	// Проверка давления (реалистичные значения на уровне моря)
 	if s.Pressure > 0 && (s.Pressure < 900 || s.Pressure > 1100) {
-		return fmt.Errorf("invalid pressure: %f", s.Pressure)
+		return fmt.Errorf("invalid pressure: %d", s.Pressure)
 	}
 
 	// Проверка батареи
@@ -83,29 +83,29 @@ func (s *Station) IsStale(maxAge time.Duration) bool {
 // GetWindDescription возвращает описание силы ветра по шкале Бофорта
 func (s *Station) GetWindDescription() string {
 	switch {
-	case s.WindSpeed < 0.3:
+	case s.WindSpeed == 0:
 		return "calm"
-	case s.WindSpeed < 1.6:
+	case s.WindSpeed <= 1:
 		return "light air"
-	case s.WindSpeed < 3.4:
+	case s.WindSpeed <= 3:
 		return "light breeze"
-	case s.WindSpeed < 5.5:
+	case s.WindSpeed <= 5:
 		return "gentle breeze"
-	case s.WindSpeed < 8.0:
+	case s.WindSpeed < 8:
 		return "moderate breeze"
-	case s.WindSpeed < 10.8:
+	case s.WindSpeed <= 10:
 		return "fresh breeze"
-	case s.WindSpeed < 13.9:
+	case s.WindSpeed <= 13:
 		return "strong breeze"
-	case s.WindSpeed < 17.2:
+	case s.WindSpeed < 17:
 		return "near gale"
-	case s.WindSpeed < 20.8:
+	case s.WindSpeed < 21:
 		return "gale"
-	case s.WindSpeed < 24.5:
+	case s.WindSpeed < 25:
 		return "strong gale"
-	case s.WindSpeed < 28.5:
+	case s.WindSpeed < 29:
 		return "storm"
-	case s.WindSpeed < 32.7:
+	case s.WindSpeed < 33:
 		return "violent storm"
 	default:
 		return "hurricane"
@@ -133,7 +133,7 @@ func (s *Station) GetWindDirection() string {
 	directions := []string{"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
 		"S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"}
 	
-	index := int((s.WindHeading + 11.25) / 22.5)
+	index := int((float64(s.WindDirection) + 11.25) / 22.5)
 	if index >= len(directions) {
 		index = 0
 	}
@@ -149,7 +149,7 @@ func (s *Station) ToRedisHash() map[string]interface{} {
 		"lon":          s.Position.Longitude,
 		"temperature":  s.Temperature,
 		"wind_speed":   s.WindSpeed,
-		"wind_heading": s.WindHeading,
+		"wind_direction": s.WindDirection,
 		"last_update":  s.LastUpdate.Unix(),
 	}
 
@@ -171,8 +171,8 @@ func (s *Station) ToRedisHash() map[string]interface{} {
 }
 
 // FromRedisHash восстанавливает станцию из Redis hash
-func (s *Station) FromRedisHash(addr uint32, data map[string]string) error {
-	s.Addr = addr
+func (s *Station) FromRedisHash(id string, data map[string]string) error {
+	s.ID = id
 
 	// Парсим данные
 	if name, ok := data["name"]; ok {
@@ -188,19 +188,27 @@ func (s *Station) FromRedisHash(addr uint32, data map[string]string) error {
 	}
 
 	if temp, ok := data["temperature"]; ok {
-		fmt.Sscanf(temp, "%f", &s.Temperature)
+		var t int
+		fmt.Sscanf(temp, "%d", &t)
+		s.Temperature = int8(t)
 	}
 
 	if windSpeed, ok := data["wind_speed"]; ok {
-		fmt.Sscanf(windSpeed, "%f", &s.WindSpeed)
+		var ws int
+		fmt.Sscanf(windSpeed, "%d", &ws)
+		s.WindSpeed = uint8(ws)
 	}
 
-	if windHeading, ok := data["wind_heading"]; ok {
-		fmt.Sscanf(windHeading, "%f", &s.WindHeading)
+	if windDirection, ok := data["wind_direction"]; ok {
+		var dir int
+		fmt.Sscanf(windDirection, "%d", &dir)
+		s.WindDirection = uint16(dir)
 	}
 
 	if windGusts, ok := data["wind_gusts"]; ok {
-		fmt.Sscanf(windGusts, "%f", &s.WindGusts)
+		var wg int
+		fmt.Sscanf(windGusts, "%d", &wg)
+		s.WindGusts = uint8(wg)
 	}
 
 	if humidity, ok := data["humidity"]; ok {
@@ -210,7 +218,9 @@ func (s *Station) FromRedisHash(addr uint32, data map[string]string) error {
 	}
 
 	if pressure, ok := data["pressure"]; ok {
-		fmt.Sscanf(pressure, "%f", &s.Pressure)
+		var p int
+		fmt.Sscanf(pressure, "%d", &p)
+		s.Pressure = uint16(p)
 	}
 
 	if battery, ok := data["battery"]; ok {

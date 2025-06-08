@@ -8,20 +8,20 @@ import (
 // Thermal представляет термический поток
 type Thermal struct {
 	// Идентификация
-	ID   uint64 `json:"id"`   // Уникальный ID
-	Addr uint32 `json:"addr"` // Кто обнаружил
+	ID         string `json:"id"`          // Уникальный ID
+	ReportedBy string `json:"reported_by"` // Device ID кто обнаружил
 
 	// Позиция
-	Position GeoPoint `json:"position"` // Координаты центра
+	Center   GeoPoint `json:"center"`   // Координаты центра
 	Altitude int32    `json:"altitude"` // Высота термика (м)
 
 	// Характеристики
-	Quality uint8   `json:"quality"` // Качество 0-5
-	Climb   float32 `json:"climb"`   // Средняя скороподъемность (м/с)
+	Quality   uint8 `json:"quality"`    // Качество 0-5
+	ClimbRate int16 `json:"climb_rate"` // Средняя скороподъемность (м/с * 100)
 
 	// Ветер на высоте
-	WindSpeed   float32 `json:"wind_speed"`   // Скорость ветра (м/с)
-	WindHeading float32 `json:"wind_heading"` // Направление ветра (градусы)
+	WindSpeed     uint8  `json:"wind_speed"`     // Скорость ветра (км/ч)
+	WindDirection uint16 `json:"wind_direction"` // Направление ветра (градусы)
 
 	// Метаданные
 	Timestamp time.Time `json:"timestamp"` // Время создания
@@ -29,16 +29,16 @@ type Thermal struct {
 
 // Validate проверяет корректность данных термика
 func (t *Thermal) Validate() error {
-	if t.ID == 0 {
+	if t.ID == "" {
 		return fmt.Errorf("id is required")
 	}
 
-	if t.Addr == 0 {
-		return fmt.Errorf("addr is required")
+	if t.ReportedBy == "" {
+		return fmt.Errorf("reported_by is required")
 	}
 
-	if err := t.Position.Validate(); err != nil {
-		return fmt.Errorf("position: %w", err)
+	if err := t.Center.Validate(); err != nil {
+		return fmt.Errorf("center: %w", err)
 	}
 
 	// Проверка высоты
@@ -52,18 +52,18 @@ func (t *Thermal) Validate() error {
 	}
 
 	// Проверка скороподъемности (реалистичные значения)
-	if t.Climb < -5 || t.Climb > 20 {
-		return fmt.Errorf("invalid climb rate: %f", t.Climb)
+	if t.ClimbRate < -500 || t.ClimbRate > 2000 {
+		return fmt.Errorf("invalid climb rate: %d", t.ClimbRate)
 	}
 
 	// Проверка скорости ветра
-	if t.WindSpeed < 0 || t.WindSpeed > 100 {
-		return fmt.Errorf("invalid wind speed: %f", t.WindSpeed)
+	if t.WindSpeed > 100 {
+		return fmt.Errorf("invalid wind speed: %d", t.WindSpeed)
 	}
 
 	// Проверка направления ветра
-	if t.WindHeading < 0 || t.WindHeading >= 360 {
-		return fmt.Errorf("invalid wind heading: %f", t.WindHeading)
+	if t.WindDirection >= 360 {
+		return fmt.Errorf("invalid wind direction: %d", t.WindDirection)
 	}
 
 	return nil
@@ -76,7 +76,7 @@ func (t *Thermal) IsStale(maxAge time.Duration) bool {
 
 // IsStrong проверяет, является ли термик сильным
 func (t *Thermal) IsStrong() bool {
-	return t.Quality >= 4 || t.Climb >= 3.0
+	return t.Quality >= 4 || t.ClimbRate >= 300
 }
 
 // GetQualityDescription возвращает описание качества термика
@@ -102,33 +102,33 @@ func (t *Thermal) GetQualityDescription() string {
 // ToRedisHash конвертирует термик в map для Redis HSET
 func (t *Thermal) ToRedisHash() map[string]interface{} {
 	return map[string]interface{}{
-		"addr":         t.Addr,
-		"lat":          t.Position.Latitude,
-		"lon":          t.Position.Longitude,
-		"altitude":     t.Altitude,
-		"quality":      t.Quality,
-		"climb":        t.Climb,
-		"wind_speed":   t.WindSpeed,
-		"wind_heading": t.WindHeading,
-		"timestamp":    t.Timestamp.Unix(),
+		"reported_by":     t.ReportedBy,
+		"lat":             t.Center.Latitude,
+		"lon":             t.Center.Longitude,
+		"altitude":        t.Altitude,
+		"quality":         t.Quality,
+		"climb_rate":      t.ClimbRate,
+		"wind_speed":      t.WindSpeed,
+		"wind_direction":  t.WindDirection,
+		"timestamp":       t.Timestamp.Unix(),
 	}
 }
 
 // FromRedisHash восстанавливает термик из Redis hash
-func (t *Thermal) FromRedisHash(id uint64, data map[string]string) error {
+func (t *Thermal) FromRedisHash(id string, data map[string]string) error {
 	t.ID = id
 
 	// Парсим данные
-	if addr, ok := data["addr"]; ok {
-		fmt.Sscanf(addr, "%d", &t.Addr)
+	if reportedBy, ok := data["reported_by"]; ok {
+		t.ReportedBy = reportedBy
 	}
 
 	if lat, ok := data["lat"]; ok {
-		fmt.Sscanf(lat, "%f", &t.Position.Latitude)
+		fmt.Sscanf(lat, "%f", &t.Center.Latitude)
 	}
 
 	if lon, ok := data["lon"]; ok {
-		fmt.Sscanf(lon, "%f", &t.Position.Longitude)
+		fmt.Sscanf(lon, "%f", &t.Center.Longitude)
 	}
 
 	if alt, ok := data["altitude"]; ok {
@@ -141,16 +141,22 @@ func (t *Thermal) FromRedisHash(id uint64, data map[string]string) error {
 		t.Quality = uint8(q)
 	}
 
-	if climb, ok := data["climb"]; ok {
-		fmt.Sscanf(climb, "%f", &t.Climb)
+	if climb, ok := data["climb_rate"]; ok {
+		var c int
+		fmt.Sscanf(climb, "%d", &c)
+		t.ClimbRate = int16(c)
 	}
 
 	if windSpeed, ok := data["wind_speed"]; ok {
-		fmt.Sscanf(windSpeed, "%f", &t.WindSpeed)
+		var ws int
+		fmt.Sscanf(windSpeed, "%d", &ws)
+		t.WindSpeed = uint8(ws)
 	}
 
-	if windHeading, ok := data["wind_heading"]; ok {
-		fmt.Sscanf(windHeading, "%f", &t.WindHeading)
+	if windDirection, ok := data["wind_direction"]; ok {
+		var wd int
+		fmt.Sscanf(windDirection, "%d", &wd)
+		t.WindDirection = uint16(wd)
 	}
 
 	if timestamp, ok := data["timestamp"]; ok {
@@ -163,20 +169,14 @@ func (t *Thermal) FromRedisHash(id uint64, data map[string]string) error {
 }
 
 // GenerateID генерирует уникальный ID для термика на основе позиции и времени
-func GenerateThermalID(pos GeoPoint, timestamp time.Time) uint64 {
+func GenerateThermalID(pos GeoPoint, timestamp time.Time) string {
 	// Простой алгоритм: комбинация geohash и timestamp
 	geohash := pos.Geohash(7) // Точность ~150м
 	
-	// Берем первые 8 байт geohash
-	var hash uint64
-	for i := 0; i < len(geohash) && i < 8; i++ {
-		hash = (hash << 8) | uint64(geohash[i])
-	}
-	
 	// Добавляем временную компоненту (минуты с начала дня)
-	minutes := uint64(timestamp.Hour()*60 + timestamp.Minute())
+	minutes := timestamp.Hour()*60 + timestamp.Minute()
 	
-	return (hash << 16) | minutes
+	return fmt.Sprintf("%s_%04d", geohash, minutes)
 }
 
 // MergeThermals объединяет близкие термики в один
@@ -196,7 +196,7 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 		// Начинаем с текущего термика
 		result := thermals[i]
 		count := 1.0
-		sumClimb := result.Climb
+		sumClimb := float32(result.ClimbRate)
 		sumQuality := float32(result.Quality)
 
 		// Ищем близкие термики
@@ -205,17 +205,17 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 				continue
 			}
 
-			distance := result.Position.DistanceTo(thermals[j].Position)
+			distance := result.Center.DistanceTo(thermals[j].Center)
 			if distance <= mergeRadius {
 				// Объединяем
 				used[j] = true
 				count++
-				sumClimb += thermals[j].Climb
+				sumClimb += float32(thermals[j].ClimbRate)
 				sumQuality += float32(thermals[j].Quality)
 
 				// Обновляем позицию как среднее
-				result.Position.Latitude = (result.Position.Latitude + thermals[j].Position.Latitude) / 2
-				result.Position.Longitude = (result.Position.Longitude + thermals[j].Position.Longitude) / 2
+				result.Center.Latitude = (result.Center.Latitude + thermals[j].Center.Latitude) / 2
+				result.Center.Longitude = (result.Center.Longitude + thermals[j].Center.Longitude) / 2
 				
 				// Берем максимальную высоту
 				if thermals[j].Altitude > result.Altitude {
@@ -225,7 +225,7 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 				// Обновляем ветер (берем от более качественного термика)
 				if thermals[j].Quality > result.Quality {
 					result.WindSpeed = thermals[j].WindSpeed
-					result.WindHeading = thermals[j].WindHeading
+					result.WindDirection = thermals[j].WindDirection
 				}
 
 				// Обновляем время на более свежее
@@ -236,7 +236,7 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 		}
 
 		// Усредняем характеристики
-		result.Climb = sumClimb / float32(count)
+		result.ClimbRate = int16(sumClimb / float32(count))
 		result.Quality = uint8(sumQuality / float32(count))
 
 		merged = append(merged, result)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -19,18 +20,38 @@ const (
 	ThermalsGeoKey = "thermals:geo"   // GEO индекс для термиков
 	StationsGeoKey = "stations:geo"   // GEO индекс для метеостанций
 	
+	// Дополнительные индексы
+	ThermalsTimeKey = "thermals:time" // Z-SET индекс термиков по времени
+	
 	// Префиксы для хешей с детальными данными
-	PilotPrefix   = "pilot:"         // pilot:{device_id}
-	ThermalPrefix = "thermal:"       // thermal:{thermal_id}
-	StationPrefix = "station:"       // station:{station_id}
+	PilotPrefix   = "pilot:"         // pilot:{addr}
+	ThermalPrefix = "thermal:"       // thermal:{id}
+	StationPrefix = "station:"       // station:{addr}
+	TrackPrefix   = "track:"         // track:{addr} - список точек трека
 	
-	// TTL для данных
-	PilotTTL   = 24 * time.Hour      // Пилоты удаляются через 24 часа
-	ThermalTTL = 6 * time.Hour       // Термики удаляются через 6 часов
-	StationTTL = 7 * 24 * time.Hour  // Станции обновляются раз в неделю
+	// Префиксы для клиентов и подписок
+	ClientPrefix        = "client:"         // client:{id}
+	ClientRegionsPrefix = "client:%s:regions" // client:{id}:regions
+	UpdatesPrefix       = "updates:"        // updates:{geohash}
 	
-	// Настройки батчинга
-	MaxBatchSize = 100
+	// Кэш аутентификации
+	AuthTokenPrefix = "auth:token:"   // auth:token:{token_hash}
+	
+	// Счетчики и статистика
+	SequenceGlobal = "sequence:global"  // Глобальный счетчик
+	StatsPrefix    = "stats:"          // stats:{metric}
+	
+	// TTL для данных (согласно спецификации)
+	PilotTTL     = 12 * time.Hour     // 43200 секунд
+	ThermalTTL   = 6 * time.Hour      // 21600 секунд
+	StationTTL   = 24 * time.Hour     // 86400 секунд
+	ClientTTL    = 5 * time.Minute    // 300 секунд
+	AuthTokenTTL = 1 * time.Hour      // 3600 секунд
+	
+	// Настройки для списков
+	MaxTrackPoints    = 999          // Максимум точек в треке
+	MaxStationHistory = 287          // 24 часа с 5-мин интервалом
+	MaxUpdatesQueue   = 99           // Максимум обновлений в очереди
 )
 
 // RedisRepository репозиторий для работы с Redis
@@ -90,7 +111,7 @@ func (r *RedisRepository) Close() error {
 	return r.client.Close()
 }
 
-// SavePilot сохраняет данные пилота
+// SavePilot сохраняет данные пилота согласно Redis схеме
 func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) error {
 	if pilot == nil {
 		return fmt.Errorf("pilot cannot be nil")
@@ -100,33 +121,56 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 
 	// Сохраняем в геопространственный индекс
 	pipe.GeoAdd(ctx, PilotsGeoKey, &redis.GeoLocation{
-		Name:      pilot.DeviceID,
+		Name:      fmt.Sprintf("pilot:%s", pilot.DeviceID),
 		Latitude:  pilot.Position.Latitude,
 		Longitude: pilot.Position.Longitude,
 	})
 
-	// Сохраняем детальные данные в хеш
+	// Сохраняем детальные данные в HSET согласно спецификации
 	pilotKey := PilotPrefix + pilot.DeviceID
-	pilotData, err := json.Marshal(pilot)
-	if err != nil {
-		return fmt.Errorf("failed to marshal pilot data: %w", err)
+	pipe.HSet(ctx, pilotKey, map[string]interface{}{
+		"name":         pilot.Name,
+		"type":         pilot.AircraftType,
+		"altitude":     pilot.Position.Altitude,
+		"speed":        pilot.Speed,
+		"climb":        pilot.ClimbRate,
+		"course":       pilot.Heading,
+		"last_update":  pilot.LastUpdate.Unix(),
+		"track_online": pilot.TrackOnline,
+		"battery":      pilot.Battery,
+	})
+
+	// Устанавливаем TTL
+	pipe.Expire(ctx, pilotKey, PilotTTL)
+
+	// Сохраняем точку трека если есть
+	if pilot.Position.Latitude != 0 && pilot.Position.Longitude != 0 {
+		trackKey := TrackPrefix + pilot.DeviceID
+		
+		// Сериализуем позицию в protobuf для экономии места
+		positionData, err := json.Marshal(map[string]interface{}{
+			"lat": pilot.Position.Latitude,
+			"lon": pilot.Position.Longitude,
+			"alt": pilot.Position.Altitude,
+			"ts":  pilot.LastUpdate.Unix(),
+		})
+		if err == nil {
+			pipe.LPush(ctx, trackKey, positionData)
+			pipe.LTrim(ctx, trackKey, 0, MaxTrackPoints)
+			pipe.Expire(ctx, trackKey, PilotTTL)
+		}
 	}
 
-	pipe.Set(ctx, pilotKey, pilotData, PilotTTL)
-
-	// Устанавливаем TTL для геопространственного индекса
-	pipe.Expire(ctx, PilotsGeoKey, PilotTTL)
-
 	// Выполняем все операции в батче
-	_, err = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to save pilot: %w", err)
 	}
 
-	r.logger.Debug("Saved pilot to Redis", 
-		"device_id", pilot.DeviceID,
-		"lat", pilot.Position.Latitude,
-		"lon", pilot.Position.Longitude)
+	// Обновляем статистику
+	r.client.Incr(ctx, StatsPrefix+"pilots:updates")
+
+	r.logger.WithField("device_id", pilot.DeviceID).WithField("lat", pilot.Position.Latitude).WithField("lon", pilot.Position.Longitude).Debug("Saved pilot to Redis")
 
 	return nil
 }
@@ -151,13 +195,19 @@ func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.G
 		return []*models.Pilot{}, nil
 	}
 
-	// Получаем детальные данные пилотов батчем
+	// Получаем детальные данные пилотов из HSET батчем
 	pipe := r.client.Pipeline()
-	cmds := make([]*redis.StringCmd, len(locations))
+	cmds := make([]*redis.MapStringStringCmd, len(locations))
 	
 	for i, loc := range locations {
-		pilotKey := PilotPrefix + loc.Name
-		cmds[i] = pipe.Get(ctx, pilotKey)
+		// Извлекаем device_id из имени (pilot:device_id -> device_id)
+		deviceID := loc.Name
+		if strings.HasPrefix(loc.Name, "pilot:") {
+			deviceID = strings.TrimPrefix(loc.Name, "pilot:")
+		}
+		
+		pilotKey := PilotPrefix + deviceID
+		cmds[i] = pipe.HGetAll(ctx, pilotKey)
 	}
 
 	_, err = pipe.Exec(ctx)
@@ -172,26 +222,43 @@ func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.G
 			continue // Пилот удален, но еще в гео-индексе
 		}
 		if cmd.Err() != nil {
-			r.logger.Warn("Failed to get pilot data", "device_id", locations[i].Name, "error", cmd.Err())
+			r.logger.WithFields(map[string]interface{}{
+				"device_id": locations[i].Name,
+				"error": cmd.Err(),
+			}).Warn("Failed to get pilot data")
 			continue
 		}
 
-		var pilot models.Pilot
-		if err := json.Unmarshal([]byte(cmd.Val()), &pilot); err != nil {
-			r.logger.Warn("Failed to unmarshal pilot data", "device_id", locations[i].Name, "error", err)
+		data := cmd.Val()
+		if len(data) == 0 {
+			continue // Пустые данные
+		}
+
+		// Извлекаем device_id
+		deviceID := locations[i].Name
+		if strings.HasPrefix(locations[i].Name, "pilot:") {
+			deviceID = strings.TrimPrefix(locations[i].Name, "pilot:")
+		}
+
+		// Конвертируем HSET данные в модель пилота
+		pilot, err := r.mapToPilot(deviceID, data, &locations[i])
+		if err != nil {
+			r.logger.WithFields(map[string]interface{}{
+				"device_id": deviceID,
+				"error": err,
+			}).Warn("Failed to map pilot data")
 			continue
 		}
 
-		// Добавляем расстояние от центра поиска
-		pilot.DistanceKM = locations[i].Dist
-		pilots = append(pilots, &pilot)
+		pilots = append(pilots, pilot)
 	}
 
-	r.logger.Debug("Retrieved pilots in radius", 
-		"center_lat", center.Latitude,
-		"center_lon", center.Longitude,
-		"radius_km", radiusKM,
-		"found", len(pilots))
+	r.logger.WithFields(map[string]interface{}{
+		"center_lat": center.Latitude,
+		"center_lon": center.Longitude,
+		"radius_km": radiusKM,
+		"found": len(pilots),
+	}).Debug("Retrieved pilots in radius")
 
 	return pilots, nil
 }
@@ -226,10 +293,7 @@ func (r *RedisRepository) SaveThermal(ctx context.Context, thermal *models.Therm
 		return fmt.Errorf("failed to save thermal: %w", err)
 	}
 
-	r.logger.Debug("Saved thermal to Redis", 
-		"thermal_id", thermal.ID,
-		"lat", thermal.Center.Latitude,
-		"lon", thermal.Center.Longitude)
+	r.logger.WithField("thermal_id", thermal.ID).WithField("lat", thermal.Center.Latitude).WithField("lon", thermal.Center.Longitude).Debug("Saved thermal to Redis")
 
 	return nil
 }
@@ -273,17 +337,22 @@ func (r *RedisRepository) GetThermalsInRadius(ctx context.Context, center models
 			continue
 		}
 		if cmd.Err() != nil {
-			r.logger.Warn("Failed to get thermal data", "thermal_id", locations[i].Name, "error", cmd.Err())
+			r.logger.WithFields(map[string]interface{}{
+				"thermal_id": locations[i].Name,
+				"error": cmd.Err(),
+			}).Warn("Failed to get thermal data")
 			continue
 		}
 
 		var thermal models.Thermal
 		if err := json.Unmarshal([]byte(cmd.Val()), &thermal); err != nil {
-			r.logger.Warn("Failed to unmarshal thermal data", "thermal_id", locations[i].Name, "error", err)
+			r.logger.WithFields(map[string]interface{}{
+				"thermal_id": locations[i].Name,
+				"error": err,
+			}).Warn("Failed to unmarshal thermal data")
 			continue
 		}
 
-		thermal.DistanceKM = locations[i].Dist
 		thermals = append(thermals, &thermal)
 	}
 
@@ -359,17 +428,22 @@ func (r *RedisRepository) GetStationsInRadius(ctx context.Context, center models
 			continue
 		}
 		if cmd.Err() != nil {
-			r.logger.Warn("Failed to get station data", "station_id", locations[i].Name, "error", cmd.Err())
+			r.logger.WithFields(map[string]interface{}{
+				"station_id": locations[i].Name,
+				"error": cmd.Err(),
+			}).Warn("Failed to get station data")
 			continue
 		}
 
 		var station models.Station
 		if err := json.Unmarshal([]byte(cmd.Val()), &station); err != nil {
-			r.logger.Warn("Failed to unmarshal station data", "station_id", locations[i].Name, "error", err)
+			r.logger.WithFields(map[string]interface{}{
+				"station_id": locations[i].Name,
+				"error": err,
+			}).Warn("Failed to unmarshal station data")
 			continue
 		}
 
-		station.DistanceKM = locations[i].Dist
 		stations = append(stations, &station)
 	}
 
@@ -419,6 +493,190 @@ func (r *RedisRepository) GetStats(ctx context.Context) (map[string]interface{},
 	return stats, nil
 }
 
+// mapToPilot конвертирует HSET данные в модель пилота
+func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, location *redis.GeoLocation) (*models.Pilot, error) {
+	pilot := &models.Pilot{
+		DeviceID: deviceID,
+		Position: models.GeoPoint{
+			Latitude:  location.Latitude,
+			Longitude: location.Longitude,
+		},
+	}
+
+	// Парсим строковые значения из Redis HSET
+	if name, ok := data["name"]; ok {
+		pilot.Name = name
+	}
+
+	if typeStr, ok := data["type"]; ok {
+		if t, err := strconv.Atoi(typeStr); err == nil {
+			pilot.AircraftType = uint8(t)
+		}
+	}
+
+	if altStr, ok := data["altitude"]; ok {
+		if alt, err := strconv.Atoi(altStr); err == nil {
+			pilot.Position.Altitude = int16(alt)
+		}
+	}
+
+	if speedStr, ok := data["speed"]; ok {
+		if speed, err := strconv.ParseFloat(speedStr, 64); err == nil {
+			pilot.Speed = uint16(speed)
+		}
+	}
+
+	if climbStr, ok := data["climb"]; ok {
+		if climb, err := strconv.ParseFloat(climbStr, 64); err == nil {
+			pilot.ClimbRate = int16(climb)
+		}
+	}
+
+	if courseStr, ok := data["course"]; ok {
+		if course, err := strconv.ParseFloat(courseStr, 64); err == nil {
+			pilot.Heading = uint16(course)
+		}
+	}
+
+	if updateStr, ok := data["last_update"]; ok {
+		if timestamp, err := strconv.ParseInt(updateStr, 10, 64); err == nil {
+			pilot.LastUpdate = time.Unix(timestamp, 0)
+		}
+	}
+
+	if onlineStr, ok := data["track_online"]; ok {
+		pilot.TrackOnline = onlineStr == "1" || onlineStr == "true"
+	}
+
+	if batteryStr, ok := data["battery"]; ok {
+		if battery, err := strconv.Atoi(batteryStr); err == nil {
+			pilot.Battery = uint8(battery)
+		}
+	}
+
+	return pilot, nil
+}
+
+// mapToThermal конвертирует HSET данные в модель термика
+func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string, location *redis.GeoLocation) (*models.Thermal, error) {
+	thermal := &models.Thermal{
+		ID: thermalID,
+		Center: models.GeoPoint{
+			Latitude:  location.Latitude,
+			Longitude: location.Longitude,
+		},
+	}
+
+	if addrStr, ok := data["addr"]; ok {
+		if addr, err := strconv.Atoi(addrStr); err == nil {
+			thermal.ReportedBy = fmt.Sprintf("%06X", addr)
+		}
+	}
+
+	if altStr, ok := data["altitude"]; ok {
+		if alt, err := strconv.Atoi(altStr); err == nil {
+			thermal.Altitude = int32(alt)
+		}
+	}
+
+	if qualityStr, ok := data["quality"]; ok {
+		if quality, err := strconv.Atoi(qualityStr); err == nil {
+			thermal.Quality = uint8(quality)
+		}
+	}
+
+	if climbStr, ok := data["climb"]; ok {
+		if climb, err := strconv.ParseFloat(climbStr, 64); err == nil {
+			thermal.ClimbRate = int16(climb * 10) // м/с -> м/с * 10
+		}
+	}
+
+	if windSpeedStr, ok := data["wind_speed"]; ok {
+		if windSpeed, err := strconv.ParseFloat(windSpeedStr, 64); err == nil {
+			thermal.WindSpeed = uint8(windSpeed * 3.6) // м/с -> км/ч
+		}
+	}
+
+	if windHeadingStr, ok := data["wind_heading"]; ok {
+		if windHeading, err := strconv.ParseFloat(windHeadingStr, 64); err == nil {
+			thermal.WindDirection = uint16(windHeading)
+		}
+	}
+
+	if timestampStr, ok := data["timestamp"]; ok {
+		if timestamp, err := strconv.ParseInt(timestampStr, 10, 64); err == nil {
+			thermal.Timestamp = time.Unix(timestamp, 0)
+		}
+	}
+
+	return thermal, nil
+}
+
+// mapToStation конвертирует HSET данные в модель станции
+func (r *RedisRepository) mapToStation(stationID string, data map[string]string, location *redis.GeoLocation) (*models.Station, error) {
+	station := &models.Station{
+		ID: stationID,
+		Position: models.GeoPoint{
+			Latitude:  location.Latitude,
+			Longitude: location.Longitude,
+		},
+	}
+
+	if name, ok := data["name"]; ok {
+		station.Name = name
+	}
+
+	if tempStr, ok := data["temperature"]; ok {
+		if temp, err := strconv.ParseFloat(tempStr, 64); err == nil {
+			station.Temperature = int8(temp)
+		}
+	}
+
+	if windSpeedStr, ok := data["wind_speed"]; ok {
+		if windSpeed, err := strconv.ParseFloat(windSpeedStr, 64); err == nil {
+			station.WindSpeed = uint8(windSpeed * 3.6) // м/с -> км/ч
+		}
+	}
+
+	if windHeadingStr, ok := data["wind_heading"]; ok {
+		if windHeading, err := strconv.ParseFloat(windHeadingStr, 64); err == nil {
+			station.WindDirection = uint16(windHeading)
+		}
+	}
+
+	if windGustsStr, ok := data["wind_gusts"]; ok {
+		if windGusts, err := strconv.ParseFloat(windGustsStr, 64); err == nil {
+			station.WindGusts = uint8(windGusts * 3.6) // м/с -> км/ч
+		}
+	}
+
+	if humidityStr, ok := data["humidity"]; ok {
+		if humidity, err := strconv.Atoi(humidityStr); err == nil {
+			station.Humidity = uint8(humidity)
+		}
+	}
+
+	if pressureStr, ok := data["pressure"]; ok {
+		if pressure, err := strconv.ParseFloat(pressureStr, 64); err == nil {
+			station.Pressure = uint16(pressure)
+		}
+	}
+
+	if batteryStr, ok := data["battery"]; ok {
+		if battery, err := strconv.Atoi(batteryStr); err == nil {
+			station.Battery = uint8(battery)
+		}
+	}
+
+	if updateStr, ok := data["last_update"]; ok {
+		if timestamp, err := strconv.ParseInt(updateStr, 10, 64); err == nil {
+			station.LastUpdate = time.Unix(timestamp, 0)
+		}
+	}
+
+	return station, nil
+}
+
 // CleanupExpired удаляет устаревшие записи из геопространственных индексов
 func (r *RedisRepository) CleanupExpired(ctx context.Context) error {
 	// Эта операция выполняется периодически для удаления записей
@@ -449,7 +707,7 @@ func (r *RedisRepository) CleanupExpired(ctx context.Context) error {
 			return fmt.Errorf("failed to cleanup expired pilots: %w", err)
 		}
 		
-		r.logger.Info("Cleaned up expired pilots", "count", cleanupCount)
+		r.logger.WithField("count", cleanupCount).Info("Cleaned up expired pilots")
 	}
 	
 	// Аналогично для термиков и станций...

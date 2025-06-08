@@ -9,19 +9,21 @@ import (
 
 // Config содержит конфигурацию приложения
 type Config struct {
-	Server     ServerConfig
-	Redis      RedisConfig
-	MQTT       MQTTConfig
-	MySQL      MySQLConfig
-	Auth       AuthConfig
-	Geo        GeoConfig
+	Environment string
+	Server      ServerConfig
+	Redis       RedisConfig
+	MQTT        MQTTConfig
+	MySQL       MySQLConfig
+	Auth        AuthConfig
+	Geo         GeoConfig
 	Performance PerformanceConfig
-	Monitoring MonitoringConfig
-	Features   FeaturesConfig
+	Monitoring  MonitoringConfig
+	Features    FeaturesConfig
 }
 
 // ServerConfig конфигурация HTTP сервера
 type ServerConfig struct {
+	Address      string
 	Port         string
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
@@ -92,7 +94,9 @@ type FeaturesConfig struct {
 // Load загружает конфигурацию из переменных окружения
 func Load() (*Config, error) {
 	cfg := &Config{
+		Environment: getEnv("ENVIRONMENT", "development"),
 		Server: ServerConfig{
+			Address:      getEnv("SERVER_ADDRESS", ":8080"),
 			Port:         getEnv("SERVER_PORT", "8080"),
 			ReadTimeout:  getDuration("SERVER_READ_TIMEOUT", 10*time.Second),
 			WriteTimeout: getDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),

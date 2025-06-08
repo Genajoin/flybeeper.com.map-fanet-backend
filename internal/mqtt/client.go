@@ -3,7 +3,6 @@ package mqtt
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -73,13 +72,16 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 		c.connected = true
 		c.mu.Unlock()
 		
-		c.logger.Info("Connected to MQTT broker", "broker", cfg.URL)
+		c.logger.WithField("broker", cfg.URL).Info("Connected to MQTT broker")
 		
 		// Подписка на топик после подключения
 		if token := client.Subscribe(cfg.TopicPrefix, 1, c.messageHandler(handler)); token.Wait() && token.Error() != nil {
-			c.logger.Error("Failed to subscribe to topic", "topic", cfg.TopicPrefix, "error", token.Error())
+			c.logger.WithFields(map[string]interface{}{
+				"topic": cfg.TopicPrefix,
+				"error": token.Error(),
+			}).Error("Failed to subscribe to topic")
 		} else {
-			c.logger.Info("Subscribed to MQTT topic", "topic", cfg.TopicPrefix)
+			c.logger.WithField("topic", cfg.TopicPrefix).Info("Subscribed to MQTT topic")
 		}
 	})
 
@@ -89,13 +91,10 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 		c.connected = false
 		c.mu.Unlock()
 		
-		c.logger.Warn("Lost connection to MQTT broker", "error", err)
+		c.logger.WithField("error", err).Warn("Lost connection to MQTT broker")
 	})
 
-	// Callback при восстановлении соединения
-	opts.SetReconnectHandler(func(client mqtt.Client, opts *mqtt.ClientOptions) {
-		c.logger.Info("Attempting to reconnect to MQTT broker")
-	})
+	// Callback при восстановлении соединения не поддерживается в данной версии
 
 	c.client = mqtt.NewClient(opts)
 
@@ -104,7 +103,7 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 
 // Connect подключается к MQTT брокеру
 func (c *Client) Connect() error {
-	c.logger.Info("Connecting to MQTT broker", "broker", c.config.URL)
+	c.logger.WithField("broker", c.config.URL).Info("Connecting to MQTT broker")
 
 	token := c.client.Connect()
 	if token.Wait() && token.Error() != nil {
@@ -166,40 +165,44 @@ func (c *Client) messageHandler(handler MessageHandler) mqtt.MessageHandler {
 			topic := msg.Topic()
 			payload := msg.Payload()
 			
-			c.logger.Debug("Received MQTT message", 
-				"topic", topic, 
-				"payload_size", len(payload),
-				"qos", msg.Qos(),
-				"retained", msg.Retained())
+			c.logger.WithFields(map[string]interface{}{
+				"topic": topic,
+				"payload_size": len(payload),
+				"qos": msg.Qos(),
+				"retained": msg.Retained(),
+			}).Debug("Received MQTT message")
 			
 			// Парсим FANET сообщение
 			fanetMsg, err := c.parser.Parse(topic, payload)
 			if err != nil {
-				c.logger.Error("Failed to parse FANET message", 
-					"topic", topic, 
-					"error", err,
-					"payload_size", len(payload))
+				c.logger.WithFields(map[string]interface{}{
+					"topic": topic,
+					"error": err,
+					"payload_size": len(payload),
+				}).Error("Failed to parse FANET message")
 				return
 			}
 			
 			if fanetMsg == nil {
 				// Сообщение не является валидным FANET пакетом или не поддерживается
-				c.logger.Debug("Skipping non-FANET or unsupported message", "topic", topic)
+				c.logger.WithField("topic", topic).Debug("Skipping non-FANET or unsupported message")
 				return
 			}
 			
 			// Передаем сообщение обработчику
 			if err := handler(fanetMsg); err != nil {
-				c.logger.Error("Message handler failed", 
-					"topic", topic,
-					"message_type", fanetMsg.Type,
-					"device_id", fanetMsg.DeviceID,
-					"error", err)
+				c.logger.WithFields(map[string]interface{}{
+					"topic": topic,
+					"message_type": fanetMsg.Type,
+					"device_id": fanetMsg.DeviceID,
+					"error": err,
+				}).Error("Message handler failed")
 			} else {
-				c.logger.Debug("Successfully processed FANET message",
-					"topic", topic,
-					"message_type", fanetMsg.Type,
-					"device_id", fanetMsg.DeviceID)
+				c.logger.WithFields(map[string]interface{}{
+					"topic": topic,
+					"message_type": fanetMsg.Type,
+					"device_id": fanetMsg.DeviceID,
+				}).Debug("Successfully processed FANET message")
 			}
 		}()
 	}
@@ -230,11 +233,12 @@ func (c *Client) PublishMessage(topic string, payload []byte, qos byte, retained
 		return fmt.Errorf("failed to publish message: %w", token.Error())
 	}
 	
-	c.logger.Debug("Published MQTT message", 
-		"topic", topic,
-		"payload_size", len(payload),
-		"qos", qos,
-		"retained", retained)
+	c.logger.WithFields(map[string]interface{}{
+		"topic": topic,
+		"payload_size": len(payload),
+		"qos": qos,
+		"retained": retained,
+	}).Debug("Published MQTT message")
 	
 	return nil
 }
