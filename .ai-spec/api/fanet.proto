@@ -1,0 +1,232 @@
+syntax = "proto3";
+
+package fanet.v1;
+
+option go_package = "github.com/flybeeper/fanet-backend/pkg/pb;pb";
+
+// ==================== Базовые типы ====================
+
+// Географическая точка
+message GeoPoint {
+  double latitude = 1;   // Широта (-90 до 90)
+  double longitude = 2;  // Долгота (-180 до 180)
+}
+
+// Географические границы
+message Bounds {
+  GeoPoint southwest = 1;  // Юго-западный угол
+  GeoPoint northeast = 2;  // Северо-восточный угол
+}
+
+// ==================== Модели данных ====================
+
+// Тип летательного аппарата
+enum PilotType {
+  PILOT_TYPE_UNKNOWN = 0;
+  PILOT_TYPE_PARAGLIDER = 1;    // Параплан
+  PILOT_TYPE_HANGGLIDER = 2;    // Дельтаплан
+  PILOT_TYPE_GLIDER = 3;        // Планер
+  PILOT_TYPE_POWERED = 4;       // Мотопараплан
+  PILOT_TYPE_HELICOPTER = 5;    // Вертолет
+  PILOT_TYPE_UAV = 6;           // Дрон
+  PILOT_TYPE_BALLOON = 7;       // Воздушный шар
+}
+
+// Пилот/UFO
+message Pilot {
+  // Идентификация
+  uint32 addr = 1;         // FANET адрес
+  string name = 2;         // Имя пилота
+  PilotType type = 3;      // Тип летательного аппарата
+  
+  // Позиция
+  GeoPoint position = 4;   // Текущие координаты
+  int32 altitude = 5;      // Высота GPS (м)
+  
+  // Движение
+  float speed = 6;         // Скорость (км/ч)
+  float climb = 7;         // Вертикальная скорость (м/с)
+  float course = 8;        // Курс (градусы)
+  
+  // Статус
+  int64 last_update = 9;   // Unix timestamp
+  bool track_online = 10;  // Онлайн трекинг
+  uint32 battery = 11;     // Заряд батареи (%)
+}
+
+// Термический поток
+message Thermal {
+  // Идентификация
+  uint64 id = 1;           // Уникальный ID
+  uint32 addr = 2;         // Кто обнаружил
+  
+  // Позиция
+  GeoPoint position = 3;   // Координаты центра
+  int32 altitude = 4;      // Высота термика (м)
+  
+  // Характеристики
+  uint32 quality = 5;      // Качество 0-5
+  float climb = 6;         // Средняя скороподъемность (м/с)
+  
+  // Ветер на высоте
+  float wind_speed = 7;    // Скорость ветра (м/с)
+  float wind_heading = 8;  // Направление ветра (градусы)
+  
+  // Метаданные
+  int64 timestamp = 9;     // Unix timestamp создания
+}
+
+// Метеостанция
+message Station {
+  // Идентификация
+  uint32 addr = 1;         // FANET адрес станции
+  string name = 2;         // Название станции
+  
+  // Позиция
+  GeoPoint position = 3;   // Координаты станции
+  
+  // Погодные данные
+  float temperature = 4;   // Температура (°C)
+  float wind_speed = 5;    // Скорость ветра (м/с)
+  float wind_heading = 6;  // Направление ветра (градусы)
+  float wind_gusts = 7;    // Порывы ветра (м/с)
+  uint32 humidity = 8;     // Влажность (%)
+  float pressure = 9;      // Давление (гПа)
+  
+  // Статус
+  uint32 battery = 10;     // Заряд батареи (%)
+  int64 last_update = 11;  // Unix timestamp
+}
+
+// Точка трека
+message TrackPoint {
+  GeoPoint position = 1;   // Координаты
+  int32 altitude = 2;      // Высота (м)
+  float speed = 3;         // Скорость (км/ч)
+  float climb = 4;         // Вариометр (м/с)
+  int64 timestamp = 5;     // Unix timestamp
+}
+
+// Трек полета
+message Track {
+  uint32 addr = 1;              // FANET адрес пилота
+  repeated TrackPoint points = 2; // Точки трека
+  int64 start_time = 3;         // Начало трека
+  int64 end_time = 4;           // Конец трека
+}
+
+// ==================== API запросы/ответы ====================
+
+// Запрос начального снимка
+message SnapshotRequest {
+  GeoPoint center = 1;     // Центр карты
+  int32 radius = 2;        // Радиус в км (max 200)
+}
+
+// Ответ с начальным снимком
+message SnapshotResponse {
+  repeated Pilot pilots = 1;      // Пилоты в регионе
+  repeated Thermal thermals = 2;  // Термики
+  repeated Station stations = 3;  // Метеостанции
+  uint64 sequence = 4;           // Номер последовательности
+}
+
+// Запрос пилотов в регионе
+message PilotsRequest {
+  Bounds bounds = 1;       // Географические границы
+}
+
+// Ответ со списком пилотов
+message PilotsResponse {
+  repeated Pilot pilots = 1;
+}
+
+// Запрос термиков
+message ThermalsRequest {
+  Bounds bounds = 1;       // Географические границы
+  uint32 min_quality = 2;  // Минимальное качество (опционально)
+}
+
+// Ответ со списком термиков
+message ThermalsResponse {
+  repeated Thermal thermals = 1;
+}
+
+// Запрос метеостанций
+message StationsRequest {
+  Bounds bounds = 1;       // Географические границы
+}
+
+// Ответ со списком станций
+message StationsResponse {
+  repeated Station stations = 1;
+}
+
+// Запрос трека пилота
+message TrackRequest {
+  uint32 addr = 1;         // FANET адрес пилота
+  int32 hours = 2;         // Количество часов истории (max 12)
+}
+
+// Ответ с треком
+message TrackResponse {
+  Track track = 1;
+}
+
+// Отправка позиции (требует авторизации)
+message PositionRequest {
+  GeoPoint position = 1;   // Координаты
+  int32 altitude = 2;      // Высота (м)
+  float speed = 3;         // Скорость (км/ч)
+  float climb = 4;         // Вариометр (м/с)
+  float course = 5;        // Курс (градусы)
+  int64 timestamp = 6;     // Unix timestamp
+}
+
+// Ответ на отправку позиции
+message PositionResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+// ==================== WebSocket обновления ====================
+
+// Тип обновления
+enum UpdateType {
+  UPDATE_TYPE_PILOT = 0;
+  UPDATE_TYPE_THERMAL = 1;
+  UPDATE_TYPE_STATION = 2;
+}
+
+// Действие
+enum Action {
+  ACTION_ADD = 0;
+  ACTION_UPDATE = 1;
+  ACTION_REMOVE = 2;
+}
+
+// Дифференциальное обновление
+message Update {
+  UpdateType type = 1;     // Тип обновления
+  Action action = 2;       // Действие
+  bytes data = 3;          // Protobuf данные (Pilot/Thermal/Station)
+  uint64 sequence = 4;     // Номер последовательности
+}
+
+// Пакет обновлений
+message UpdateBatch {
+  repeated Update updates = 1;  // Список обновлений
+  int64 timestamp = 2;         // Время батча
+}
+
+// Подписка на обновления
+message SubscribeRequest {
+  GeoPoint center = 1;     // Центр карты
+  int32 radius = 2;        // Радиус в км
+  uint64 last_sequence = 3; // Последняя полученная последовательность
+}
+
+// Отписка
+message UnsubscribeRequest {
+  string reason = 1;       // Причина отписки
+}

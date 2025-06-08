@@ -1,0 +1,289 @@
+package models
+
+import (
+	"fmt"
+	"time"
+)
+
+// Station представляет метеостанцию
+type Station struct {
+	// Идентификация
+	Addr uint32 `json:"addr"`           // FANET адрес станции
+	Name string `json:"name,omitempty"` // Название станции
+
+	// Позиция
+	Position GeoPoint `json:"position"` // Координаты станции
+
+	// Погодные данные
+	Temperature float32 `json:"temperature"`           // Температура (°C)
+	WindSpeed   float32 `json:"wind_speed"`            // Скорость ветра (м/с)
+	WindHeading float32 `json:"wind_heading"`          // Направление ветра (градусы)
+	WindGusts   float32 `json:"wind_gusts,omitempty"`  // Порывы ветра (м/с)
+	Humidity    uint8   `json:"humidity,omitempty"`    // Влажность (%)
+	Pressure    float32 `json:"pressure,omitempty"`    // Давление (гПа)
+
+	// Статус
+	Battery    uint8     `json:"battery,omitempty"` // Заряд батареи (%)
+	LastUpdate time.Time `json:"last_update"`       // Время последнего обновления
+}
+
+// Validate проверяет корректность данных станции
+func (s *Station) Validate() error {
+	if s.Addr == 0 {
+		return fmt.Errorf("addr is required")
+	}
+
+	if err := s.Position.Validate(); err != nil {
+		return fmt.Errorf("position: %w", err)
+	}
+
+	// Проверка температуры (реалистичные значения)
+	if s.Temperature < -60 || s.Temperature > 60 {
+		return fmt.Errorf("invalid temperature: %f", s.Temperature)
+	}
+
+	// Проверка скорости ветра
+	if s.WindSpeed < 0 || s.WindSpeed > 100 {
+		return fmt.Errorf("invalid wind speed: %f", s.WindSpeed)
+	}
+
+	// Проверка направления ветра
+	if s.WindHeading < 0 || s.WindHeading >= 360 {
+		return fmt.Errorf("invalid wind heading: %f", s.WindHeading)
+	}
+
+	// Проверка порывов ветра
+	if s.WindGusts < 0 || s.WindGusts > 150 {
+		return fmt.Errorf("invalid wind gusts: %f", s.WindGusts)
+	}
+
+	// Проверка влажности
+	if s.Humidity > 100 {
+		return fmt.Errorf("invalid humidity: %d", s.Humidity)
+	}
+
+	// Проверка давления (реалистичные значения на уровне моря)
+	if s.Pressure > 0 && (s.Pressure < 900 || s.Pressure > 1100) {
+		return fmt.Errorf("invalid pressure: %f", s.Pressure)
+	}
+
+	// Проверка батареи
+	if s.Battery > 100 {
+		return fmt.Errorf("invalid battery level: %d", s.Battery)
+	}
+
+	return nil
+}
+
+// IsStale проверяет, устарели ли данные станции
+func (s *Station) IsStale(maxAge time.Duration) bool {
+	return time.Since(s.LastUpdate) > maxAge
+}
+
+// GetWindDescription возвращает описание силы ветра по шкале Бофорта
+func (s *Station) GetWindDescription() string {
+	switch {
+	case s.WindSpeed < 0.3:
+		return "calm"
+	case s.WindSpeed < 1.6:
+		return "light air"
+	case s.WindSpeed < 3.4:
+		return "light breeze"
+	case s.WindSpeed < 5.5:
+		return "gentle breeze"
+	case s.WindSpeed < 8.0:
+		return "moderate breeze"
+	case s.WindSpeed < 10.8:
+		return "fresh breeze"
+	case s.WindSpeed < 13.9:
+		return "strong breeze"
+	case s.WindSpeed < 17.2:
+		return "near gale"
+	case s.WindSpeed < 20.8:
+		return "gale"
+	case s.WindSpeed < 24.5:
+		return "strong gale"
+	case s.WindSpeed < 28.5:
+		return "storm"
+	case s.WindSpeed < 32.7:
+		return "violent storm"
+	default:
+		return "hurricane"
+	}
+}
+
+// IsFlyable проверяет, подходит ли погода для полетов
+func (s *Station) IsFlyable() bool {
+	// Базовые критерии для парапланов
+	if s.WindSpeed > 10 { // > 10 м/с слишком сильный ветер
+		return false
+	}
+	if s.WindGusts > 15 { // Сильные порывы опасны
+		return false
+	}
+	// Дождь определяется по влажности и температуре (упрощенно)
+	if s.Humidity > 95 && s.Temperature > 0 {
+		return false
+	}
+	return true
+}
+
+// GetWindDirection возвращает направление ветра в виде компаса
+func (s *Station) GetWindDirection() string {
+	directions := []string{"N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+		"S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"}
+	
+	index := int((s.WindHeading + 11.25) / 22.5)
+	if index >= len(directions) {
+		index = 0
+	}
+	
+	return directions[index]
+}
+
+// ToRedisHash конвертирует станцию в map для Redis HSET
+func (s *Station) ToRedisHash() map[string]interface{} {
+	hash := map[string]interface{}{
+		"name":         s.Name,
+		"lat":          s.Position.Latitude,
+		"lon":          s.Position.Longitude,
+		"temperature":  s.Temperature,
+		"wind_speed":   s.WindSpeed,
+		"wind_heading": s.WindHeading,
+		"last_update":  s.LastUpdate.Unix(),
+	}
+
+	// Опциональные поля
+	if s.WindGusts > 0 {
+		hash["wind_gusts"] = s.WindGusts
+	}
+	if s.Humidity > 0 {
+		hash["humidity"] = s.Humidity
+	}
+	if s.Pressure > 0 {
+		hash["pressure"] = s.Pressure
+	}
+	if s.Battery > 0 {
+		hash["battery"] = s.Battery
+	}
+
+	return hash
+}
+
+// FromRedisHash восстанавливает станцию из Redis hash
+func (s *Station) FromRedisHash(addr uint32, data map[string]string) error {
+	s.Addr = addr
+
+	// Парсим данные
+	if name, ok := data["name"]; ok {
+		s.Name = name
+	}
+
+	if lat, ok := data["lat"]; ok {
+		fmt.Sscanf(lat, "%f", &s.Position.Latitude)
+	}
+
+	if lon, ok := data["lon"]; ok {
+		fmt.Sscanf(lon, "%f", &s.Position.Longitude)
+	}
+
+	if temp, ok := data["temperature"]; ok {
+		fmt.Sscanf(temp, "%f", &s.Temperature)
+	}
+
+	if windSpeed, ok := data["wind_speed"]; ok {
+		fmt.Sscanf(windSpeed, "%f", &s.WindSpeed)
+	}
+
+	if windHeading, ok := data["wind_heading"]; ok {
+		fmt.Sscanf(windHeading, "%f", &s.WindHeading)
+	}
+
+	if windGusts, ok := data["wind_gusts"]; ok {
+		fmt.Sscanf(windGusts, "%f", &s.WindGusts)
+	}
+
+	if humidity, ok := data["humidity"]; ok {
+		var h int
+		fmt.Sscanf(humidity, "%d", &h)
+		s.Humidity = uint8(h)
+	}
+
+	if pressure, ok := data["pressure"]; ok {
+		fmt.Sscanf(pressure, "%f", &s.Pressure)
+	}
+
+	if battery, ok := data["battery"]; ok {
+		var b int
+		fmt.Sscanf(battery, "%d", &b)
+		s.Battery = uint8(b)
+	}
+
+	if lastUpdate, ok := data["last_update"]; ok {
+		var timestamp int64
+		fmt.Sscanf(lastUpdate, "%d", &timestamp)
+		s.LastUpdate = time.Unix(timestamp, 0)
+	}
+
+	return s.Validate()
+}
+
+// WeatherHistory представляет историческую запись погоды
+type WeatherHistory struct {
+	Timestamp   time.Time `json:"timestamp"`
+	Temperature float32   `json:"temperature"`
+	WindSpeed   float32   `json:"wind_speed"`
+	WindHeading float32   `json:"wind_heading"`
+	Humidity    uint8     `json:"humidity,omitempty"`
+	Pressure    float32   `json:"pressure,omitempty"`
+}
+
+// GetTrend возвращает тренд изменения погоды
+func GetWeatherTrend(history []WeatherHistory) map[string]string {
+	if len(history) < 2 {
+		return map[string]string{
+			"temperature": "stable",
+			"wind":        "stable",
+			"pressure":    "stable",
+		}
+	}
+
+	trends := make(map[string]string)
+	
+	// Анализ температуры
+	tempDiff := history[len(history)-1].Temperature - history[0].Temperature
+	switch {
+	case tempDiff > 2:
+		trends["temperature"] = "rising"
+	case tempDiff < -2:
+		trends["temperature"] = "falling"
+	default:
+		trends["temperature"] = "stable"
+	}
+
+	// Анализ ветра
+	windDiff := history[len(history)-1].WindSpeed - history[0].WindSpeed
+	switch {
+	case windDiff > 2:
+		trends["wind"] = "increasing"
+	case windDiff < -2:
+		trends["wind"] = "decreasing"
+	default:
+		trends["wind"] = "stable"
+	}
+
+	// Анализ давления
+	if history[0].Pressure > 0 && history[len(history)-1].Pressure > 0 {
+		pressureDiff := history[len(history)-1].Pressure - history[0].Pressure
+		switch {
+		case pressureDiff > 2:
+			trends["pressure"] = "rising"
+		case pressureDiff < -2:
+			trends["pressure"] = "falling"
+		default:
+			trends["pressure"] = "stable"
+		}
+	}
+
+	return trends
+}

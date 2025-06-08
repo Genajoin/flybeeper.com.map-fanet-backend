@@ -1,0 +1,412 @@
+openapi: 3.0.3
+info:
+  title: FlyBeeper FANET API
+  description: High-performance API for real-time FANET tracking data
+  version: 1.0.0
+  contact:
+    name: FlyBeeper Support
+    email: support@flybeeper.com
+
+servers:
+  - url: https://api.flybeeper.com/fanet/v1
+    description: Production server
+  - url: http://localhost:8080/api/v1
+    description: Local development
+
+paths:
+  /snapshot:
+    get:
+      summary: Get initial snapshot
+      description: Returns all pilots, thermals and stations within specified radius
+      parameters:
+        - name: lat
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: -90
+            maximum: 90
+          description: Center latitude
+        - name: lon
+          in: query
+          required: true
+          schema:
+            type: number
+            format: double
+            minimum: -180
+            maximum: 180
+          description: Center longitude
+        - name: radius
+          in: query
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+          description: Radius in kilometers
+      responses:
+        '200':
+          description: Snapshot data
+          content:
+            application/x-protobuf:
+              schema:
+                $ref: '#/components/schemas/SnapshotResponse'
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SnapshotResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /pilots:
+    get:
+      summary: Get pilots in bounds
+      description: Returns all pilots within geographic bounds
+      parameters:
+        - name: bounds
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^-?\d+\.?\d*,-?\d+\.?\d*,-?\d+\.?\d*,-?\d+\.?\d*$'
+          description: 'Bounds: sw_lat,sw_lon,ne_lat,ne_lon'
+          example: '45.5,15.0,47.5,16.2'
+      responses:
+        '200':
+          description: List of pilots
+          content:
+            application/x-protobuf:
+              schema:
+                $ref: '#/components/schemas/PilotsResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /thermals:
+    get:
+      summary: Get thermals in bounds
+      description: Returns all thermals within geographic bounds
+      parameters:
+        - name: bounds
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Bounds: sw_lat,sw_lon,ne_lat,ne_lon'
+        - name: min_quality
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 5
+          description: Minimum thermal quality
+      responses:
+        '200':
+          description: List of thermals
+          content:
+            application/x-protobuf:
+              schema:
+                $ref: '#/components/schemas/ThermalsResponse'
+
+  /stations:
+    get:
+      summary: Get weather stations in bounds
+      description: Returns all weather stations within geographic bounds
+      parameters:
+        - name: bounds
+          in: query
+          required: true
+          schema:
+            type: string
+          description: 'Bounds: sw_lat,sw_lon,ne_lat,ne_lon'
+      responses:
+        '200':
+          description: List of stations
+          content:
+            application/x-protobuf:
+              schema:
+                $ref: '#/components/schemas/StationsResponse'
+
+  /track/{addr}:
+    get:
+      summary: Get pilot track
+      description: Returns track history for specific pilot
+      parameters:
+        - name: addr
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: FANET address
+        - name: hours
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 12
+            default: 12
+          description: Hours of history
+      responses:
+        '200':
+          description: Track data
+          content:
+            application/x-protobuf:
+              schema:
+                $ref: '#/components/schemas/TrackResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /position:
+    post:
+      summary: Send position update
+      description: Send pilot position (requires authentication)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema:
+              $ref: '#/components/schemas/PositionRequest'
+      responses:
+        '200':
+          description: Position accepted
+          content:
+            application/x-protobuf:
+              schema:
+                $ref: '#/components/schemas/PositionResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+components:
+  schemas:
+    GeoPoint:
+      type: object
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+
+    Pilot:
+      type: object
+      properties:
+        addr:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [PARAGLIDER, HANGGLIDER, GLIDER, POWERED, HELICOPTER, UAV, BALLOON]
+        position:
+          $ref: '#/components/schemas/GeoPoint'
+        altitude:
+          type: integer
+        speed:
+          type: number
+        climb:
+          type: number
+        course:
+          type: number
+        last_update:
+          type: integer
+          format: int64
+        track_online:
+          type: boolean
+        battery:
+          type: integer
+
+    Thermal:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        addr:
+          type: integer
+        position:
+          $ref: '#/components/schemas/GeoPoint'
+        altitude:
+          type: integer
+        quality:
+          type: integer
+        climb:
+          type: number
+        wind_speed:
+          type: number
+        wind_heading:
+          type: number
+        timestamp:
+          type: integer
+          format: int64
+
+    Station:
+      type: object
+      properties:
+        addr:
+          type: integer
+        name:
+          type: string
+        position:
+          $ref: '#/components/schemas/GeoPoint'
+        temperature:
+          type: number
+        wind_speed:
+          type: number
+        wind_heading:
+          type: number
+        wind_gusts:
+          type: number
+        humidity:
+          type: integer
+        pressure:
+          type: number
+        battery:
+          type: integer
+        last_update:
+          type: integer
+          format: int64
+
+    SnapshotResponse:
+      type: object
+      properties:
+        pilots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pilot'
+        thermals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Thermal'
+        stations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Station'
+        sequence:
+          type: integer
+          format: int64
+
+    PilotsResponse:
+      type: object
+      properties:
+        pilots:
+          type: array
+          items:
+            $ref: '#/components/schemas/Pilot'
+
+    ThermalsResponse:
+      type: object
+      properties:
+        thermals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Thermal'
+
+    StationsResponse:
+      type: object
+      properties:
+        stations:
+          type: array
+          items:
+            $ref: '#/components/schemas/Station'
+
+    TrackResponse:
+      type: object
+      properties:
+        track:
+          type: object
+          properties:
+            addr:
+              type: integer
+            points:
+              type: array
+              items:
+                type: object
+                properties:
+                  position:
+                    $ref: '#/components/schemas/GeoPoint'
+                  altitude:
+                    type: integer
+                  speed:
+                    type: number
+                  climb:
+                    type: number
+                  timestamp:
+                    type: integer
+                    format: int64
+
+    PositionRequest:
+      type: object
+      required: [position, altitude, timestamp]
+      properties:
+        position:
+          $ref: '#/components/schemas/GeoPoint'
+        altitude:
+          type: integer
+        speed:
+          type: number
+        climb:
+          type: number
+        course:
+          type: number
+        timestamp:
+          type: integer
+          format: int64
+
+    PositionResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: string
+
+    Error:
+      type: object
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    
+    TooManyRequests:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token from Laravel API
