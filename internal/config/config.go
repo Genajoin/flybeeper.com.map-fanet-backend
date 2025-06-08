@@ -96,8 +96,8 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		Environment: getEnv("ENVIRONMENT", "development"),
 		Server: ServerConfig{
-			Address:      getEnv("SERVER_ADDRESS", ":8080"),
-			Port:         getEnv("SERVER_PORT", "8080"),
+			Address:      getEnv("SERVER_ADDRESS", ":8090"),
+			Port:         getEnv("SERVER_PORT", "8090"),
 			ReadTimeout:  getDuration("SERVER_READ_TIMEOUT", 10*time.Second),
 			WriteTimeout: getDuration("SERVER_WRITE_TIMEOUT", 10*time.Second),
 			IdleTimeout:  getDuration("SERVER_IDLE_TIMEOUT", 120*time.Second),

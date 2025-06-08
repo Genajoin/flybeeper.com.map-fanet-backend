@@ -6,10 +6,10 @@ services:
       context: ../..
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"  # API port
+      - "8090:8090"  # API port
       - "9090:9090"  # Metrics port
     environment:
-      - SERVER_PORT=8080
+      - SERVER_PORT=8090
       - REDIS_URL=redis://redis:6379
       - MQTT_URL=tcp://mqtt:1883
       - MYSQL_DSN=root:password@tcp(mysql:3306)/fanet?parseTime=true
@@ -41,7 +41,7 @@ services:
       - "1883:1883"  # MQTT port
       - "9001:9001"  # WebSocket port
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto-simple.conf:/mosquitto/config/mosquitto.conf
       - mqtt-data:/mosquitto/data
       - mqtt-logs:/mosquitto/log
     networks:

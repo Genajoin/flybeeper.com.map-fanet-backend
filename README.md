@@ -30,18 +30,15 @@ Frontend ←→ Go API Server ←→ Redis Cache
 ## Быстрый старт
 
 ```bash
-# Установка зависимостей
-make deps
-
-# Генерация Protobuf
-make proto
-
-# Локальный запуск
-make run
-
-# Docker
-docker-compose up
+# Установка зависимостей и запуск среды разработки
+make deps && make proto
+make dev-env  # Запуск Redis, MQTT, MySQL
+make dev      # API с hot reload на localhost:8090
 ```
+
+**Для разработчиков**: См. [DEVELOPMENT.md](DEVELOPMENT.md) для подробных инструкций.
+
+**Production**: См. [deployments/](deployments/) для Docker/Kubernetes.
 
 ## API
 
@@ -71,9 +68,9 @@ POST /api/v1/position                                # Отправка пози
 
 ## Требования
 
-- Go 1.21+
-- Redis 7.0+
-- Docker (опционально)
+- Go 1.23+
+- Docker и Docker Compose
+- Make
 
 ## Лицензия
 
