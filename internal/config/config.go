@@ -116,7 +116,7 @@ func Load() (*Config, error) {
 			Password:     getEnv("MQTT_PASSWORD", ""),
 			CleanSession: getBool("MQTT_CLEAN_SESSION", false),
 			OrderMatters: getBool("MQTT_ORDER_MATTERS", false),
-			TopicPrefix:  getEnv("MQTT_TOPIC_PREFIX", "fb/b/+/f"),
+			TopicPrefix:  getEnv("MQTT_TOPIC_PREFIX", "fb/b/+/f/#"),
 		},
 		MySQL: MySQLConfig{
 			DSN:          getEnv("MYSQL_DSN", ""),

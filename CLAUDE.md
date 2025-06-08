@@ -26,6 +26,10 @@ make dev-env
 
 # Docker сборка
 make docker-build
+
+# MQTT тестирование
+make mqtt-test        # Запустить тестовый издатель MQTT
+make mqtt-test-quick  # Быстрый тест (50 сообщений)
 ```
 
 ## Архитектура
@@ -61,14 +65,17 @@ make docker-build
 
 ## Важные детали реализации
 
-### MQTT интеграция
-- Topic pattern: `fb/b/+/f` (базовая_станция/chip_id/fanet)
+### MQTT интеграция ✅ ОБНОВЛЕНО
+- Topic pattern: `fb/b/{chip_id}/f/{packet_type}` (новый формат с packet_type)
+- Подписка: `fb/b/+/f/#` для всех базовых станций и типов
 - Обертка базовой станции: timestamp (4) + RSSI (2) + SNR (2) + FANET пакет
 - FANET заголовок: 1 байт (тип в битах 0-2) + 3 байта адрес источника
 - Поддерживаемые типы: 1 (Air), 2 (Name), 4 (Service), 7 (Ground), 9 (Thermal)
 - Координаты: lat * 93206.04, lon * 46603.02 (24-bit signed)
 - Парсинг FANET протокола в `internal/mqtt/parser.go`
+- Валидация соответствия packet_type из топика и FANET заголовка
 - Автореконнект и обработка ошибок
+- **Тестирование**: `make mqtt-test` для публикации тестовых данных
 
 ### Redis использование
 - Геопространственные индексы для pilots/thermals/stations
@@ -165,6 +172,13 @@ curl "http://localhost:8090/api/v1/snapshot?lat=46.0&lon=8.0&radius=50"
 # Проверка WebSocket (в браузере console)
 const ws = new WebSocket('ws://localhost:8090/ws/v1/updates?lat=46&lon=8&radius=50');
 
-# Проверка MQTT
-mosquitto_pub -h localhost -p 1883 -t "fb/b/test/f" -m "test-message"
+# Проверка MQTT (старый формат)
+mosquitto_pub -h localhost -p 1883 -t "fb/b/test/f/1" -m "test-message"
+
+# Тестирование MQTT с реальными FANET данными
+make mqtt-test-quick  # Быстрый тест (50 сообщений)
+make mqtt-test        # Полноценное тестирование
+
+# Ручная публикация тестовых данных
+scripts/mqtt-test.sh -r 1s -m 10 -t 1,2  # Только tracking и name
 ```

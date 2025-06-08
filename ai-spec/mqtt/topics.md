@@ -5,15 +5,33 @@
 ### 1. FANET данные от базовых станций
 
 ```
-fb/b/{chip_id}/f
+fb/b/{chip_id}/f/{packet_type}
 ```
 
 - `fb` - FlyBeeper namespace
 - `b` - Base station (базовая станция)
 - `{chip_id}` - Уникальный ID базовой станции (например: 2462966788)
 - `f` - FANET data
+- `{packet_type}` - Тип FANET пакета
 
-Пример: `fb/b/2462966788/f`
+Примеры реальных данных:
+
+```
+Topic: fb/b/8896672/f/1
+8986 4468 88ff feff 0111 900b 4caf 411b c209 a690 0300 00
+
+Topic: fb/b/8896672/f/2
+2089 4468 bfff 0a00 4206 5e6e 536b 794e 6574 3a20 4d61 7461 6a75 72
+
+Topic: fb/b/8896672/f/4
+1e89 4468 beff 0900 4406 9373 60ec b741 a9a5 092e 800e 24
+
+Topic: fb/b/7048812/f/7
+c586 4468 86ff fbff 0711 900b 49af 411d c209 91
+
+Topic: fb/b/8896672/f/9
+7583 4468 93ff 0200 0911 900b 21b3 4156 bf09 a872 0815 ac
+```
 
 ### 2. Hardware информация от станций
 
@@ -33,7 +51,7 @@ fb/s/{service}/metrics - Метрики
 
 ## Формат сообщений
 
-### FANET пакет (fb/b/+/f)
+### FANET пакет (fb/b/+/f/#)
 
 Бинарный формат:
 
@@ -133,7 +151,7 @@ Payload:
 ### Подписка на все базовые станции
 
 ```javascript
-mqtt.subscribe('fb/b/+/f', (err) => {
+mqtt.subscribe('fb/b/+/f/#', (err) => {
   if (!err) {
     console.log('Subscribed to all FANET data');
   }

@@ -15,6 +15,7 @@ type FANETMessage struct {
 	Type        uint8               `json:"type"`         // Тип сообщения (1=Air tracking, 2=Name, 4=Service, 7=Ground tracking, 9=Thermal)
 	DeviceID    string              `json:"device_id"`    // ID устройства (24-bit адрес)
 	ChipID      string              `json:"chip_id"`      // ID базовой станции (из топика)
+	PacketType  string              `json:"packet_type"`  // Тип пакета из топика для дополнительной валидации
 	Timestamp   time.Time           `json:"timestamp"`    // Время от базовой станции
 	RSSI        int16               `json:"rssi"`         // Уровень сигнала (dBm)
 	SNR         int16               `json:"snr"`          // Signal-to-Noise Ratio (dB)
@@ -87,13 +88,14 @@ func NewParser(logger *utils.Logger) *Parser {
 
 // Parse парсит MQTT сообщение и извлекает FANET данные
 func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
-	// Извлекаем информацию из топика: fb/b/{chip_id}/f
+	// Извлекаем информацию из топика: fb/b/{chip_id}/f/{packet_type}
 	parts := strings.Split(topic, "/")
-	if len(parts) != 4 || parts[0] != "fb" || parts[1] != "b" || parts[3] != "f" {
+	if len(parts) != 5 || parts[0] != "fb" || parts[1] != "b" || parts[3] != "f" {
 		return nil, fmt.Errorf("invalid topic format: %s", topic)
 	}
 	
 	chipID := parts[2]
+	packetType := parts[4] // packet_type из топика
 	
 	// Проверяем минимальный размер (обертка базовой станции + заголовок FANET)
 	if len(payload) < 12 {
@@ -119,10 +121,16 @@ func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
 	deviceAddr := uint32(fanetData[1]) | uint32(fanetData[2])<<8 | uint32(fanetData[3])<<16
 	deviceID := fmt.Sprintf("%06X", deviceAddr)
 	
+	// Валидация соответствия packet_type из топика и FANET заголовка
+	if expectedType := fmt.Sprintf("%d", msgType); packetType != expectedType {
+		return nil, fmt.Errorf("packet type mismatch: topic has %s, FANET header has %d", packetType, msgType)
+	}
+
 	msg := &FANETMessage{
 		Type:       msgType,
 		DeviceID:   deviceID,
 		ChipID:     chipID,
+		PacketType: packetType,
 		Timestamp:  time.Unix(timestamp, 0).UTC(),
 		RSSI:       rssi,
 		SNR:        snr,

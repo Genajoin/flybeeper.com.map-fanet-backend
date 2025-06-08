@@ -1,4 +1,4 @@
-.PHONY: all build run test clean deps proto docker
+.PHONY: all build run test clean deps proto docker mqtt-test mqtt-test-build mqtt-test-clean mqtt-test-quick
 
 # Variables
 BINARY_NAME=fanet-api
@@ -104,6 +104,23 @@ profile-mem:
 	@go test -memprofile=mem.prof -bench=.
 	@go tool pprof -http=:8081 mem.prof
 
+# MQTT Test Publisher
+mqtt-test:
+	@echo "Starting MQTT test publisher..."
+	@./scripts/mqtt-test.sh
+
+mqtt-test-build:
+	@echo "Building MQTT test publisher..."
+	@./scripts/mqtt-test.sh --build
+
+mqtt-test-clean:
+	@echo "Cleaning MQTT test publisher..."
+	@./scripts/mqtt-test.sh --clean
+
+mqtt-test-quick:
+	@echo "Quick MQTT test (1s rate, 50 messages)..."
+	@./scripts/mqtt-test.sh -r 1s -m 50
+
 # Help
 help:
 	@echo "Available targets:"
@@ -117,3 +134,5 @@ help:
 	@echo "  make docker-build - Build Docker image"
 	@echo "  make dev-env  - Start development environment"
 	@echo "  make proto    - Generate protobuf files"
+	@echo "  make mqtt-test - Start MQTT test publisher"
+	@echo "  make mqtt-test-quick - Quick MQTT test (50 messages)"
