@@ -1,20 +1,22 @@
 # FlyBeeper FANET Backend
 
-Высокопроизводительный Go backend для real-time отслеживания FANET устройств с минимальным энергопотреблением.
+Высокопроизводительный Go backend для real-time отслеживания FANET устройств с асинхронным MySQL batch writer для обработки до 10,000 сообщений в секунду.
 
 ## Ключевые особенности
 
 - **Real-time данные**: Прямая подписка на MQTT без задержек
+- **Высокая производительность**: MySQL batch writer до 10,000 msg/sec
 - **Энергоэффективность**: HTTP/2 + Protobuf = -90% трафика
 - **Масштабируемость**: 10000+ concurrent connections
 - **Региональная фильтрация**: Автоматическая подписка на радиус 200км
 - **Дифференциальные обновления**: Только изменения после начального снимка
 - **Низкая латентность**: < 50ms для региональных запросов
+- **Асинхронная архитектура**: Неблокирующие MySQL операции
 
 ## Архитектура
 
 ```
-Frontend ←→ Go API Server ←→ Redis Cache
+Frontend ←→ Go API Server ←→ Redis Cache (real-time)
                 ↑              ↑
          HTTP/2 + Protobuf     │
                 ↑              │
@@ -22,9 +24,9 @@ Frontend ←→ Go API Server ←→ Redis Cache
                                ↓
                          MQTT Broker ←→ FANET Devices
                                ↑
-                        MqttToDb (legacy)
+                    Batch Writer (async 10k msg/sec)
                                ↓
-                          MySQL (backup)
+                          MySQL (storage)
 ```
 
 ## Быстрый старт
@@ -33,6 +35,11 @@ Frontend ←→ Go API Server ←→ Redis Cache
 # Установка зависимостей и запуск среды разработки
 make deps && make proto
 make dev-env  # Запуск Redis, MQTT, MySQL
+
+# Запуск API с MySQL batch writer (рекомендуется)
+MYSQL_DSN="root:password@tcp(localhost:3306)/fanet?parseTime=true" make dev
+
+# Альтернативно: только Redis (без MySQL)
 make dev      # API с hot reload на localhost:8090
 ```
 

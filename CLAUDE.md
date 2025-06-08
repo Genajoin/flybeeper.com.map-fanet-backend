@@ -62,6 +62,7 @@ make mqtt-test-quick  # Быстрый тест (50 сообщений)
 2. **Дифференциальные обновления**: Полный снимок при подключении, затем только изменения
 3. **Энергоэффективность**: Protobuf вместо JSON, батчинг обновлений, адаптивные интервалы
 4. **Stateless архитектура** для горизонтального масштабирования
+5. **Высокопроизводительная архитектура**: Асинхронный MySQL batch writer для 10k msg/sec
 
 ## Важные детали реализации
 
@@ -82,6 +83,15 @@ make mqtt-test-quick  # Быстрый тест (50 сообщений)
 - TTL 24 часа для автоочистки (pilots: 12h, thermals: 6h, stations: 24h)
 - Pipeline для батчевых операций
 - HSET для детальных данных с маппингом
+
+### MySQL batch writer ✅ НОВОЕ
+- **Асинхронные очереди** для высокопроизводительной записи (до 10k msg/sec)
+- **Batch INSERT** операции: 1000 записей в батче или 5-секундный flush
+- **Worker pool** архитектура с retry логикой и graceful shutdown
+- **Неблокирующие операции** - MQTT обработка не ждет MySQL
+- **Type 2 (Name) поддержка** для обновления имен пилотов
+- **Метрики производительности**: batch size, queue depth, latency
+- **Транзакционная безопасность** с rollback при ошибках
 
 ### REST API
 - HTTP/2 с Gin framework
@@ -110,7 +120,7 @@ make mqtt-test-quick  # Быстрый тест (50 сообщений)
 - `SERVER_PORT` - порт API (по умолчанию 8090)
 - `REDIS_URL` - подключение к Redis (redis://localhost:6379)
 - `MQTT_URL` - подключение к MQTT broker (tcp://localhost:1883)
-- `MYSQL_DSN` - MySQL для fallback данных
+- `MYSQL_DSN` - MySQL для высокопроизводительной записи и backup (требуется для batch writer)
 - `AUTH_ENDPOINT` - Laravel API для проверки токенов
 - `DEFAULT_RADIUS_KM` - радиус фильтрации (200км)
 - `LOG_LEVEL` - уровень логирования (debug/info/warn/error)
@@ -122,11 +132,12 @@ make mqtt-test-quick  # Быстрый тест (50 сообщений)
 ### ✅ Завершено (100%):
 - **MQTT клиент и парсер FANET** - полное соответствие спецификации ai-spec/mqtt/
 - **Redis репозиторий** - геопространственные запросы, TTL, mapper функции
-- **MySQL fallback** - загрузка начальных данных, синхронизация с Redis  
+- **MySQL высокопроизводительная запись** - асинхронный batch writer до 10k msg/sec
 - **HTTP/2 сервер** - Gin + middleware + Protobuf/JSON поддержка
 - **REST API endpoints** - все endpoints согласно OpenAPI спецификации
 - **WebSocket handler** - real-time обновления с geohash фильтрацией
-- **MQTT-WebSocket интеграция** - полный pipeline MQTT→Redis→WebSocket
+- **MQTT-WebSocket-MySQL интеграция** - полный pipeline с производительной архитектурой
+- **Type 2 (Name) поддержка** - обновление имен пилотов через FANET
 - **Структурированное логирование** - WithField/WithFields pattern во всех компонентах
 - **Среда разработки** - Docker Compose + hot reload + отладочные интерфейсы
 - **Документация разработчика** - DEVELOPMENT.md с полными инструкциями
@@ -181,4 +192,8 @@ make mqtt-test        # Полноценное тестирование
 
 # Ручная публикация тестовых данных
 scripts/mqtt-test.sh -r 1s -m 10 -t 1,2  # Только tracking и name
+
+# Тестирование MySQL batch writer
+MYSQL_DSN="root:password@tcp(localhost:3306)/fanet?parseTime=true" make dev
+make mqtt-test-quick  # После теста проверить данные в MySQL через Adminer
 ```

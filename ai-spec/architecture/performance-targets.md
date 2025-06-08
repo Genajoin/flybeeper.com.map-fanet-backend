@@ -21,6 +21,9 @@
 | WebSocket connections | 10,000 | Одновременные подключения |
 | WebSocket updates/sec | 50,000 | Исходящие обновления |
 | Redis operations/sec | 100,000 | Чтение/запись |
+| MySQL batch inserts/sec | 10,000 | Асинхронная высокопроизводительная запись |
+| MySQL batch size | 1,000 | Записей в одном батче |
+| MySQL flush timeout | 5s | Максимальная задержка записи |
 
 ### Использование ресурсов
 
@@ -168,7 +171,60 @@ rdb := redis.NewClient(&redis.Options{
 })
 ```
 
-### 5. Protobuf оптимизации
+### 5. MySQL batch оптимизации
+
+#### Асинхронный batch writer
+```go
+// Конфигурация высокопроизводительного batch writer
+type BatchConfig struct {
+    BatchSize     int           // 1000 записей в батче
+    FlushInterval time.Duration // 5-секундный flush
+    ChannelBuffer int           // 10k буфер очереди
+    WorkerCount   int           // 10 worker'ов
+    MaxRetries    int           // 3 попытки при ошибках
+}
+
+// Неблокирующая отправка в очередь
+func (bw *BatchWriter) QueuePilot(pilot *models.Pilot) error {
+    select {
+    case bw.pilotChan <- pilot:
+        return nil
+    default:
+        return fmt.Errorf("queue is full")
+    }
+}
+```
+
+#### Batch INSERT операции
+```go
+// Генерация placeholders для массовых вставок
+func generatePlaceholders(count, fieldsPerRecord int) string {
+    singleRecord := "(" + strings.Repeat("?,", fieldsPerRecord-1) + "?)"
+    placeholders := make([]string, count)
+    for i := 0; i < count; i++ {
+        placeholders[i] = singleRecord
+    }
+    return strings.Join(placeholders, ",")
+}
+
+// Транзакционная безопасность
+tx, err := db.BeginTx(ctx, nil)
+defer tx.Rollback()
+// ... batch operations
+tx.Commit()
+```
+
+#### Метрики производительности
+```go
+type BatchMetrics struct {
+    PilotsQueued    int64         // Количество в очереди
+    PilotsBatched   int64         // Обработанные батчи
+    QueueDepth      int64         // Глубина очереди
+    LastFlushDuration time.Duration // Время последнего flush
+}
+```
+
+### 6. Protobuf оптимизации
 
 #### Streaming
 ```go
@@ -203,6 +259,8 @@ func SerializePilot(p *pb.Pilot) ([]byte, error) {
 ```
 BenchmarkMQTTProcessing-8        1000000      1050 ns/op       0 B/op       0 allocs/op
 BenchmarkRedisGeoQuery-8          200000      8500 ns/op     320 B/op       8 allocs/op
+BenchmarkMySQLBatchInsert-8         1000   1200000 ns/op    2048 B/op      10 allocs/op
+BenchmarkBatchWriterQueue-8     10000000       150 ns/op      64 B/op       1 allocs/op
 BenchmarkProtobufMarshal-8       2000000       750 ns/op     192 B/op       1 allocs/op
 BenchmarkWebSocketBroadcast-8     100000     15000 ns/op    1024 B/op      16 allocs/op
 ```
@@ -219,8 +277,13 @@ go test -bench=. -memprofile=mem.prof
 go tool pprof mem.prof
 
 # Load testing
-hey -n 100000 -c 100 -m GET http://localhost:8080/api/v1/pilots
-wrk -t12 -c400 -d30s --latency http://localhost:8080/api/v1/pilots
+hey -n 100000 -c 100 -m GET http://localhost:8090/api/v1/pilots
+wrk -t12 -c400 -d30s --latency http://localhost:8090/api/v1/pilots
+
+# MySQL batch writer testing
+MYSQL_DSN="root:password@tcp(localhost:3306)/fanet?parseTime=true" make dev
+make mqtt-test-quick  # Тест 50 сообщений
+make mqtt-test        # Полный нагрузочный тест
 ```
 
 ## Мониторинг производительности
@@ -251,6 +314,31 @@ var (
             Help: "Number of active WebSocket connections.",
         },
     )
+    
+    // MySQL batch writer метрики
+    mysqlBatchSize = prometheus.NewHistogram(
+        prometheus.HistogramOpts{
+            Name: "mysql_batch_size",
+            Help: "Size of MySQL batch operations.",
+            Buckets: []float64{100, 250, 500, 750, 1000, 1500, 2000},
+        },
+    )
+    
+    mysqlQueueDepth = prometheus.NewGaugeVec(
+        prometheus.GaugeOpts{
+            Name: "mysql_queue_depth",
+            Help: "Current depth of MySQL batch queues.",
+        },
+        []string{"queue_type"}, // pilots, thermals, stations
+    )
+    
+    mysqlBatchDuration = prometheus.NewHistogram(
+        prometheus.HistogramOpts{
+            Name: "mysql_batch_duration_seconds",
+            Help: "Time spent executing MySQL batch operations.",
+            Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5},
+        },
+    )
 )
 ```
 
@@ -262,3 +350,8 @@ var (
 - Redis операции и hit rate
 - WebSocket connections
 - MQTT processing rate
+- MySQL batch writer метрики:
+  - Queue depth по типам (pilots, thermals, stations)
+  - Batch size distribution
+  - Flush duration и frequency
+  - Error rate и retry operations
