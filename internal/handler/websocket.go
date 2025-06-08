@@ -26,6 +26,7 @@ type WebSocketHandler struct {
 	logger     *logrus.Entry
 	broadcast  *BroadcastManager
 	spatial    *geo.SpatialIndex
+	adaptive   *AdaptiveScheduler
 	sequence   uint64
 	sequenceMu sync.Mutex
 }
@@ -63,6 +64,9 @@ func NewWebSocketHandler(repo repository.Repository, logger interface{}) *WebSoc
 	// Create broadcast manager
 	broadcast := NewBroadcastManager(spatial)
 	
+	// Create adaptive scheduler
+	adaptive := NewAdaptiveScheduler(5*time.Second, logEntry)
+	
 	return &WebSocketHandler{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -76,6 +80,7 @@ func NewWebSocketHandler(repo repository.Repository, logger interface{}) *WebSoc
 		logger:     logEntry,
 		broadcast:  broadcast,
 		spatial:    spatial,
+		adaptive:   adaptive,
 	}
 }
 
@@ -136,6 +141,10 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 
 	// Регистрируем клиента в broadcast manager
 	h.broadcast.Register(client, lat, lon, float64(radius))
+	
+	// Анализируем активность региона и регистрируем в адаптивном планировщике
+	initialMetrics := AnalyzeRegionActivity(h.spatial, lat, lon, float64(radius))
+	h.adaptive.RegisterClient(client, initialMetrics)
 
 	h.logger.WithFields(logrus.Fields{
 		"client_ip": c.ClientIP(),
@@ -143,6 +152,7 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		"lon":       lon,
 		"radius":    radius,
 		"auth":      authenticated,
+		"activity":  initialMetrics.ObjectCount,
 	}).Info("WebSocket client connected")
 	
 	// Увеличиваем счетчик активных соединений
@@ -272,6 +282,10 @@ func (c *Client) writePump() {
 			// Учитываем отправленное сообщение
 			metrics.WebSocketMessagesOut.WithLabelValues("update").Inc()
 
+		case <-c.updateSignal:
+			// Обрабатываем адаптивное обновление
+			c.handleAdaptiveUpdate()
+
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			
@@ -351,6 +365,10 @@ func (c *Client) updateSubscription(lat, lon float64, radius int32) {
 func (h *WebSocketHandler) unregisterClient(client *Client) {
 	// Удаляем клиента из broadcast manager
 	h.broadcast.Unregister(client)
+	
+	// Удаляем клиента из адаптивного планировщика
+	h.adaptive.UnregisterClient(client)
+	
 	h.logger.Debug("WebSocket client disconnected")
 }
 
@@ -464,6 +482,30 @@ func calculateDistance(lat1, lon1, lat2, lon2 float64) float64 {
 	a := 0.5 - 0.5 * (dLat * dLat + dLat * dLon * dLon) // упрощенная формула для малых расстояний
 	
 	return R * 2 * a
+}
+
+// handleAdaptiveUpdate обрабатывает адаптивное обновление для клиента
+func (c *Client) handleAdaptiveUpdate() {
+	c.mu.RLock()
+	centerLat := c.center.Latitude
+	centerLon := c.center.Longitude
+	radiusKm := float64(c.radius)
+	c.mu.RUnlock()
+	
+	// Анализируем текущую активность региона
+	metrics := AnalyzeRegionActivity(c.handler.spatial, centerLat, centerLon, radiusKm)
+	
+	// Обновляем метрики в адаптивном планировщике
+	c.handler.adaptive.UpdateMetrics(c, metrics)
+	
+	// Отправляем инкрементальные обновления (если нужно)
+	// Здесь можно добавить логику для отправки только изменившихся данных
+	c.handler.logger.WithFields(logrus.Fields{
+		"client":    c.conn.RemoteAddr(),
+		"objects":   metrics.ObjectCount,
+		"frequency": metrics.UpdateFrequency,
+		"activity":  metrics.ThermalActivity,
+	}).Debug("Adaptive update processed")
 }
 
 // GetStats возвращает статистику WebSocket handler

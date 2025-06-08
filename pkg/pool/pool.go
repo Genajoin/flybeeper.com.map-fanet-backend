@@ -116,9 +116,28 @@ func (p *ObjectPools) GetPilot() *models.Pilot {
 
 // PutPilot возвращает объект Pilot в пул
 func (p *ObjectPools) PutPilot(pilot *models.Pilot) {
-	// Простая очистка - можно расширить позже
+	// Расширенная очистка объекта перед возвратом в пул
 	pilot.DeviceID = ""
+	pilot.Address = ""
 	pilot.Name = ""
+	pilot.Type = 0
+	pilot.AircraftType = 0
+	pilot.Altitude = 0
+	pilot.Speed = 0
+	pilot.ClimbRate = 0
+	pilot.Heading = 0
+	pilot.TrackOnline = false
+	pilot.Battery = 0
+	pilot.LastUpdate = pilot.LastUpdate.Truncate(pilot.LastUpdate.Sub(pilot.LastUpdate))
+	pilot.LastSeen = pilot.LastSeen.Truncate(pilot.LastSeen.Sub(pilot.LastSeen))
+	
+	// Сохраняем Position указатель, только очищаем значения
+	if pilot.Position != nil {
+		pilot.Position.Latitude = 0
+		pilot.Position.Longitude = 0
+		pilot.Position.Altitude = 0
+	}
+	
 	p.pilotPool.Put(pilot)
 }
 
@@ -129,7 +148,26 @@ func (p *ObjectPools) GetThermal() *models.Thermal {
 
 // PutThermal возвращает объект Thermal в пул
 func (p *ObjectPools) PutThermal(thermal *models.Thermal) {
+	// Расширенная очистка объекта
 	thermal.ID = ""
+	thermal.ReportedBy = ""
+	thermal.Center.Latitude = 0
+	thermal.Center.Longitude = 0
+	thermal.Center.Altitude = 0
+	thermal.Altitude = 0
+	thermal.Quality = 0
+	thermal.ClimbRate = 0
+	thermal.WindSpeed = 0
+	thermal.WindDirection = 0
+	thermal.Timestamp = thermal.Timestamp.Truncate(thermal.Timestamp.Sub(thermal.Timestamp))
+	thermal.LastSeen = thermal.LastSeen.Truncate(thermal.LastSeen.Sub(thermal.LastSeen))
+	
+	if thermal.Position != nil {
+		thermal.Position.Latitude = 0
+		thermal.Position.Longitude = 0
+		thermal.Position.Altitude = 0
+	}
+	
 	p.thermalPool.Put(thermal)
 }
 
@@ -140,7 +178,26 @@ func (p *ObjectPools) GetStation() *models.Station {
 
 // PutStation возвращает объект Station в пул
 func (p *ObjectPools) PutStation(station *models.Station) {
+	// Расширенная очистка объекта
 	station.ID = ""
+	station.ChipID = ""
+	station.Name = ""
+	station.Temperature = 0
+	station.WindSpeed = 0
+	station.WindDirection = 0
+	station.WindGusts = 0
+	station.Humidity = 0
+	station.Pressure = 0
+	station.Battery = 0
+	station.LastUpdate = station.LastUpdate.Truncate(station.LastUpdate.Sub(station.LastUpdate))
+	station.LastSeen = station.LastSeen.Truncate(station.LastSeen.Sub(station.LastSeen))
+	
+	if station.Position != nil {
+		station.Position.Latitude = 0
+		station.Position.Longitude = 0
+		station.Position.Altitude = 0
+	}
+	
 	p.stationPool.Put(station)
 }
 
@@ -151,9 +208,23 @@ func (p *ObjectPools) GetPbPilot() *pb.Pilot {
 
 // PutPbPilot возвращает Protobuf Pilot в пул
 func (p *ObjectPools) PutPbPilot(pilot *pb.Pilot) {
-	// Минимальная очистка
+	// Расширенная очистка объекта
 	pilot.Addr = 0
 	pilot.Name = ""
+	pilot.Type = 0
+	pilot.Altitude = 0
+	pilot.Speed = 0
+	pilot.Course = 0
+	pilot.Climb = 0
+	pilot.LastUpdate = 0
+	pilot.TrackOnline = false
+	pilot.Battery = 0
+	
+	if pilot.Position != nil {
+		pilot.Position.Latitude = 0
+		pilot.Position.Longitude = 0
+	}
+	
 	p.pbPilotPool.Put(pilot)
 }
 
@@ -165,6 +236,19 @@ func (p *ObjectPools) GetPbThermal() *pb.Thermal {
 // PutPbThermal возвращает Protobuf Thermal в пул
 func (p *ObjectPools) PutPbThermal(thermal *pb.Thermal) {
 	thermal.Id = 0
+	thermal.Addr = 0
+	thermal.Altitude = 0
+	thermal.Quality = 0
+	thermal.Climb = 0
+	thermal.WindSpeed = 0
+	thermal.WindHeading = 0
+	thermal.Timestamp = 0
+	
+	if thermal.Position != nil {
+		thermal.Position.Latitude = 0
+		thermal.Position.Longitude = 0
+	}
+	
 	p.pbThermalPool.Put(thermal)
 }
 
@@ -177,6 +261,20 @@ func (p *ObjectPools) GetPbStation() *pb.Station {
 func (p *ObjectPools) PutPbStation(station *pb.Station) {
 	station.Addr = 0
 	station.Name = ""
+	station.Temperature = 0
+	station.WindSpeed = 0
+	station.WindHeading = 0
+	station.WindGusts = 0
+	station.Humidity = 0
+	station.Pressure = 0
+	station.Battery = 0
+	station.LastUpdate = 0
+	
+	if station.Position != nil {
+		station.Position.Latitude = 0
+		station.Position.Longitude = 0
+	}
+	
 	p.pbStationPool.Put(station)
 }
 
@@ -187,19 +285,32 @@ func (p *ObjectPools) GetPbUpdate() *pb.Update {
 
 // PutPbUpdate возвращает Protobuf Update в пул
 func (p *ObjectPools) PutPbUpdate(update *pb.Update) {
-	// Минимальная очистка
-	update.Reset()
+	update.Type = 0
+	update.Action = 0
+	update.Data = nil
+	update.Sequence = 0
 	p.pbUpdatePool.Put(update)
 }
 
 // GetPbUpdateBatch получает Protobuf UpdateBatch из пула
 func (p *ObjectPools) GetPbUpdateBatch() *pb.UpdateBatch {
-	return p.pbUpdateBatchPool.Get().(*pb.UpdateBatch)
+	batch := p.pbUpdateBatchPool.Get().(*pb.UpdateBatch)
+	// Очищаем слайс но сохраняем capacity
+	batch.Updates = batch.Updates[:0]
+	return batch
 }
 
 // PutPbUpdateBatch возвращает Protobuf UpdateBatch в пул
 func (p *ObjectPools) PutPbUpdateBatch(batch *pb.UpdateBatch) {
-	batch.Reset()
+	// Возвращаем updates в пул
+	for _, update := range batch.Updates {
+		p.PutPbUpdate(update)
+	}
+	
+	// Очищаем слайс но сохраняем capacity
+	batch.Updates = batch.Updates[:0]
+	batch.Timestamp = 0
+	
 	p.pbUpdateBatchPool.Put(batch)
 }
 
@@ -218,12 +329,45 @@ func (p *ObjectPools) PutStringMap(m map[string]string) {
 	p.stringMapPool.Put(m)
 }
 
-// GetByteSlice получает []byte из пула
-func (p *ObjectPools) GetByteSlice() []byte {
-	return p.byteSlicePool.Get().([]byte)[:0]
+// GetGeoPoint получает объект GeoPoint из пула
+func (p *ObjectPools) GetGeoPoint() *models.GeoPoint {
+	return p.geoPointPool.Get().(*models.GeoPoint)
+}
+
+// PutGeoPoint возвращает объект GeoPoint в пул
+func (p *ObjectPools) PutGeoPoint(point *models.GeoPoint) {
+	point.Latitude = 0
+	point.Longitude = 0
+	point.Altitude = 0
+	p.geoPointPool.Put(point)
+}
+
+// GetPbGeoPoint получает Protobuf GeoPoint из пула
+func (p *ObjectPools) GetPbGeoPoint() *pb.GeoPoint {
+	return p.pbGeoPointPool.Get().(*pb.GeoPoint)
+}
+
+// PutPbGeoPoint возвращает Protobuf GeoPoint в пул
+func (p *ObjectPools) PutPbGeoPoint(point *pb.GeoPoint) {
+	point.Latitude = 0
+	point.Longitude = 0
+	p.pbGeoPointPool.Put(point)
+}
+
+// GetByteSlice получает []byte из пула с указанным размером
+func (p *ObjectPools) GetByteSlice(size int) []byte {
+	if size <= 256 {
+		b := p.byteSlicePool.Get().([]byte)
+		return b[:0]
+	}
+	// Для больших размеров создаем новый слайс
+	return make([]byte, 0, size)
 }
 
 // PutByteSlice возвращает []byte в пул
 func (p *ObjectPools) PutByteSlice(b []byte) {
-	p.byteSlicePool.Put(b)
+	// Возвращаем только небольшие слайсы
+	if cap(b) <= 256 {
+		p.byteSlicePool.Put(b[:0])
+	}
 }
