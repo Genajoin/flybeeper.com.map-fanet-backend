@@ -6,6 +6,7 @@
 
 - **Real-time данные**: Прямая подписка на MQTT без задержек
 - **Высокая производительность**: MySQL batch writer до 10,000 msg/sec
+- **SSO аутентификация**: Laravel Passport интеграция с Redis кешированием
 - **Энергоэффективность**: HTTP/2 + Protobuf = -90% трафика
 - **Масштабируемость**: 10000+ concurrent connections
 - **Региональная фильтрация**: Автоматическая подписка на радиус 200км
@@ -45,26 +46,40 @@ make dev      # API с hot reload на localhost:8090
 
 **Для разработчиков**: См. [DEVELOPMENT.md](DEVELOPMENT.md) для подробных инструкций.
 
+**Frontend интеграция**: См. [FRONTEND_INTEGRATION.md](FRONTEND_INTEGRATION.md) для подключения к maps.flybeeper.com.
+
 **Production**: См. [deployments/](deployments/) для Docker/Kubernetes.
 
 ## API
 
 ### REST Endpoints (HTTP/2)
 
-```
+```bash
 GET  /api/v1/snapshot?lat=46.5&lon=15.6&radius=200   # Начальный снимок
-GET  /api/v1/pilots?bounds=45.5,15.0,47.5,16.2       # Пилоты в регионе
+GET  /api/v1/pilots?bounds=45.5,15.0,47.5,16.2       # Пилоты в регионе  
 GET  /api/v1/thermals?bounds=45.5,15.0,47.5,16.2     # Термики
 GET  /api/v1/stations?bounds=45.5,15.0,47.5,16.2     # Метеостанции
 GET  /api/v1/track/{addr}                            # Трек пилота
-POST /api/v1/position                                # Отправка позиции (auth)
+POST /api/v1/position                                # Отправка позиции (🔒 auth)
 ```
 
-### WebSocket
+### WebSocket Real-time
 
-```
+```bash
 /ws/v1/updates?lat=46.5&lon=15.6&radius=200         # Real-time обновления
 ```
+
+### Аутентификация
+
+```bash
+# 1. Логин через Laravel API  
+POST https://api.flybeeper.com/api/v4/login
+
+# 2. Использование Bearer token
+Authorization: Bearer {token}
+```
+
+**Подробная документация**: [ai-spec/auth-integration.md](ai-spec/auth-integration.md)
 
 ## Производительность
 
