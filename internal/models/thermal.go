@@ -12,12 +12,14 @@ type Thermal struct {
 	ReportedBy string `json:"reported_by"` // Device ID кто обнаружил
 
 	// Позиция
-	Center   GeoPoint `json:"center"`   // Координаты центра
-	Altitude int32    `json:"altitude"` // Высота термика (м)
+	Center     GeoPoint  `json:"center"`     // Координаты центра
+	Position   *GeoPoint `json:"position"`   // Координаты центра (для совместимости)
+	Altitude   int32     `json:"altitude"`   // Высота термика (м)
 
 	// Характеристики
-	Quality   uint8 `json:"quality"`    // Качество 0-5
-	ClimbRate int16 `json:"climb_rate"` // Средняя скороподъемность (м/с * 100)
+	Quality    int32   `json:"quality"`      // Качество 0-5
+	ClimbRate  float32 `json:"climb_rate"`   // Средняя скороподъемность (м/с)
+	PilotCount int32   `json:"pilot_count"`  // Количество пилотов в термике
 
 	// Ветер на высоте
 	WindSpeed     uint8  `json:"wind_speed"`     // Скорость ветра (км/ч)
@@ -25,6 +27,36 @@ type Thermal struct {
 
 	// Метаданные
 	Timestamp time.Time `json:"timestamp"` // Время создания
+	LastSeen  time.Time `json:"last_seen"` // Время последнего обновления
+}
+
+// GetID возвращает уникальный идентификатор для geo.Object
+func (t *Thermal) GetID() string {
+	return t.ID
+}
+
+// GetLatitude возвращает широту для geo.Object
+func (t *Thermal) GetLatitude() float64 {
+	if t.Position != nil {
+		return t.Position.Latitude
+	}
+	return t.Center.Latitude
+}
+
+// GetLongitude возвращает долготу для geo.Object
+func (t *Thermal) GetLongitude() float64 {
+	if t.Position != nil {
+		return t.Position.Longitude
+	}
+	return t.Center.Longitude
+}
+
+// GetTimestamp возвращает время последнего обновления для geo.Object
+func (t *Thermal) GetTimestamp() time.Time {
+	if !t.LastSeen.IsZero() {
+		return t.LastSeen
+	}
+	return t.Timestamp
 }
 
 // Validate проверяет корректность данных термика

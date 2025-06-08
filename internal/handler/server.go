@@ -3,14 +3,15 @@ package handler
 import (
 	"context"
 	"net/http"
+	"net/http/pprof"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/flybeeper/fanet-backend/internal/auth"
-	"github.com/flybeeper/fanet-backend/internal/config"
-	"github.com/flybeeper/fanet-backend/internal/repository"
-	"github.com/flybeeper/fanet-backend/pkg/utils"
+	"flybeeper.com/fanet-api/internal/auth"
+	"flybeeper.com/fanet-api/internal/config"
+	"flybeeper.com/fanet-api/internal/repository"
+	"flybeeper.com/fanet-api/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -115,6 +116,25 @@ func (s *Server) setupRoutes() {
 
 	// Метрики (для мониторинга)
 	s.router.GET("/metrics", s.metricsHandler)
+	
+	// pprof endpoints для профилирования (только в development)
+	if s.config.LogLevel == "debug" {
+		pprofGroup := s.router.Group("/debug/pprof")
+		{
+			pprofGroup.GET("/", gin.WrapF(pprof.Index))
+			pprofGroup.GET("/cmdline", gin.WrapF(pprof.Cmdline))
+			pprofGroup.GET("/profile", gin.WrapF(pprof.Profile))
+			pprofGroup.GET("/symbol", gin.WrapF(pprof.Symbol))
+			pprofGroup.GET("/trace", gin.WrapF(pprof.Trace))
+			pprofGroup.GET("/heap", gin.WrapH(pprof.Handler("heap")))
+			pprofGroup.GET("/goroutine", gin.WrapH(pprof.Handler("goroutine")))
+			pprofGroup.GET("/block", gin.WrapH(pprof.Handler("block")))
+			pprofGroup.GET("/threadcreate", gin.WrapH(pprof.Handler("threadcreate")))
+			pprofGroup.GET("/mutex", gin.WrapH(pprof.Handler("mutex")))
+			pprofGroup.GET("/allocs", gin.WrapH(pprof.Handler("allocs")))
+		}
+		s.logger.Info("pprof profiling endpoints enabled at /debug/pprof/")
+	}
 }
 
 // Start запускает HTTP сервер

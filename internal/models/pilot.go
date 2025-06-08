@@ -45,41 +45,79 @@ func (t PilotType) String() string {
 type Pilot struct {
 	// Идентификация
 	DeviceID     string    `json:"device_id"`          // FANET адрес в hex формате
+	Address      string    `json:"address"`            // FANET адрес (алиас для DeviceID)
 	Name         string    `json:"name,omitempty"`     // Имя пилота
-	AircraftType uint8     `json:"aircraft_type"`      // Тип летательного аппарата
+	Type         PilotType `json:"type"`               // Тип летательного аппарата
+	AircraftType uint8     `json:"aircraft_type"`      // Тип летательного аппарата (legacy)
 
 	// Позиция
-	Position GeoPoint `json:"position"` // Текущие координаты
+	Position *GeoPoint `json:"position"` // Текущие координаты
+	Altitude int32    `json:"altitude"` // Высота в метрах
 
 	// Движение
-	Speed     uint16 `json:"speed"`      // Скорость (км/ч)
+	Speed     float32 `json:"speed"`      // Скорость (км/ч)
 	ClimbRate int16  `json:"climb_rate"` // Вертикальная скорость (м/с * 10)
-	Heading   uint16 `json:"heading"`    // Курс (градусы)
+	Heading   float32 `json:"heading"`    // Курс (градусы)
 
 	// Статус
 	LastUpdate  time.Time `json:"last_update"`            // Время последнего обновления
+	LastSeen    time.Time `json:"last_seen"`              // Время последнего обновления (алиас)
 	TrackOnline bool      `json:"track_online,omitempty"` // Онлайн трекинг
 	Battery     uint8     `json:"battery,omitempty"`      // Заряд батареи (%)
 }
 
+// GetID возвращает уникальный идентификатор для geo.Object
+func (p *Pilot) GetID() string {
+	if p.Address != "" {
+		return p.Address
+	}
+	return p.DeviceID
+}
+
+// GetLatitude возвращает широту для geo.Object
+func (p *Pilot) GetLatitude() float64 {
+	if p.Position != nil {
+		return p.Position.Latitude
+	}
+	return 0
+}
+
+// GetLongitude возвращает долготу для geo.Object
+func (p *Pilot) GetLongitude() float64 {
+	if p.Position != nil {
+		return p.Position.Longitude
+	}
+	return 0
+}
+
+// GetTimestamp возвращает время последнего обновления для geo.Object
+func (p *Pilot) GetTimestamp() time.Time {
+	if !p.LastSeen.IsZero() {
+		return p.LastSeen
+	}
+	return p.LastUpdate
+}
+
 // Validate проверяет корректность данных пилота
 func (p *Pilot) Validate() error {
-	if p.DeviceID == "" {
-		return fmt.Errorf("device_id is required")
+	if p.DeviceID == "" && p.Address == "" {
+		return fmt.Errorf("device_id or address is required")
 	}
 
-	if err := p.Position.Validate(); err != nil {
-		return fmt.Errorf("position: %w", err)
+	if p.Position != nil {
+		if err := p.Position.Validate(); err != nil {
+			return fmt.Errorf("position: %w", err)
+		}
 	}
 
 	// Проверка высоты
-	if p.Position.Altitude < -1000 || p.Position.Altitude > 15000 {
-		return fmt.Errorf("invalid altitude: %d", p.Position.Altitude)
+	if p.Altitude < -1000 || p.Altitude > 15000 {
+		return fmt.Errorf("invalid altitude: %d", p.Altitude)
 	}
 
 	// Проверка скорости
 	if p.Speed > 400 {
-		return fmt.Errorf("invalid speed: %d", p.Speed)
+		return fmt.Errorf("invalid speed: %f", p.Speed)
 	}
 
 	// Проверка вариометра (реалистичные значения: -30 до +30 м/с)
@@ -90,7 +128,7 @@ func (p *Pilot) Validate() error {
 
 	// Проверка курса
 	if p.Heading >= 360 {
-		return fmt.Errorf("invalid heading: %d", p.Heading)
+		return fmt.Errorf("invalid heading: %f", p.Heading)
 	}
 
 	// Проверка батареи

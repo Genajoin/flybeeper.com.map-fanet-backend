@@ -10,11 +10,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/mmcloughlin/geohash"
-	"github.com/flybeeper/fanet-backend/internal/models"
-	"github.com/flybeeper/fanet-backend/internal/repository"
-	"github.com/flybeeper/fanet-backend/pkg/pb"
-	"github.com/flybeeper/fanet-backend/pkg/utils"
+	"flybeeper.com/fanet-api/internal/geo"
+	"flybeeper.com/fanet-api/internal/models"
+	"flybeeper.com/fanet-api/internal/repository"
+	"flybeeper.com/fanet-api/pkg/pb"
+	"flybeeper.com/fanet-api/pkg/utils"
+	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -22,28 +23,35 @@ import (
 type WebSocketHandler struct {
 	upgrader   websocket.Upgrader
 	repository repository.Repository
-	logger     *utils.Logger
-	clients    map[*Client]bool
-	clientsMu  sync.RWMutex
+	logger     *logrus.Entry
+	broadcast  *BroadcastManager
+	spatial    *geo.SpatialIndex
 	sequence   uint64
 	sequenceMu sync.Mutex
 }
 
 // Client представляет WebSocket соединение
 type Client struct {
-	conn        *websocket.Conn
-	send        chan []byte
-	handler     *WebSocketHandler
-	center      models.GeoPoint
-	radius      int32
-	geohashes   []string
-	lastSequence uint64
+	conn          *websocket.Conn
+	send          chan []byte
+	updateSignal  chan bool
+	handler       *WebSocketHandler
+	center        models.GeoPoint
+	radius        int32
+	geohashes     []string
+	lastSequence  uint64
 	authenticated bool
-	mu          sync.RWMutex
+	mu            sync.RWMutex
 }
 
 // NewWebSocketHandler создает новый WebSocket handler
-func NewWebSocketHandler(repo repository.Repository, logger *utils.Logger) *WebSocketHandler {
+func NewWebSocketHandler(repo repository.Repository, logger *logrus.Entry) *WebSocketHandler {
+	// Create spatial index with 5 minute TTL for hot data
+	spatial := geo.NewSpatialIndex(5*time.Minute, 1000, 30*time.Second)
+	
+	// Create broadcast manager
+	broadcast := NewBroadcastManager(spatial)
+	
 	return &WebSocketHandler{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -55,7 +63,8 @@ func NewWebSocketHandler(repo repository.Repository, logger *utils.Logger) *WebS
 		},
 		repository: repo,
 		logger:     logger,
-		clients:    make(map[*Client]bool),
+		broadcast:  broadcast,
+		spatial:    spatial,
 	}
 }
 
@@ -105,20 +114,19 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 	}
 
 	client := &Client{
-		conn:      conn,
-		send:      make(chan []byte, 256),
-		handler:   h,
-		center:    models.GeoPoint{Latitude: lat, Longitude: lon},
-		radius:    int32(radius),
+		conn:         conn,
+		send:         make(chan []byte, 256),
+		updateSignal: make(chan bool, 1),
+		handler:      h,
+		center:       models.GeoPoint{Latitude: lat, Longitude: lon},
+		radius:       int32(radius),
 		authenticated: authenticated,
 	}
 
-	// Регистрируем клиента
-	h.clientsMu.Lock()
-	h.clients[client] = true
-	h.clientsMu.Unlock()
+	// Регистрируем клиента в broadcast manager
+	h.broadcast.Register(client, lat, lon, float64(radius))
 
-	h.logger.WithFields(map[string]interface{}{
+	h.logger.WithFields(logrus.Fields{
 		"client_ip": c.ClientIP(),
 		"lat":       lat,
 		"lon":       lon,
@@ -164,12 +172,9 @@ func (c *Client) subscribeToRegion() {
 	defer c.mu.Unlock()
 
 	// Вычисляем geohash ячейки для региона
-	precision := uint(5) // ~5km x 5km ячейки
-	centerHash := geohash.EncodeWithPrecision(c.center.Latitude, c.center.Longitude, precision)
-	
-	// Получаем соседние geohash для покрытия радиуса
-	neighbors := geohash.Neighbors(centerHash)
-	c.geohashes = append([]string{centerHash}, neighbors...)
+	precision := geo.OptimalGeohashPrecision(float64(c.radius))
+	geohashes := geo.Cover(c.center.Latitude, c.center.Longitude, float64(c.radius), precision)
+	c.geohashes = geohashes
 
 	// Отправляем подтверждение подписки
 	response := &pb.SubscribeResponse{
@@ -189,10 +194,11 @@ func (c *Client) subscribeToRegion() {
 		c.handler.logger.Warn("Subscribe response send timeout")
 	}
 
-	c.handler.logger.WithFields(map[string]interface{}{
+	c.handler.logger.WithFields(logrus.Fields{
 		"center":    fmt.Sprintf("%.4f,%.4f", c.center.Latitude, c.center.Longitude),
 		"radius":    c.radius,
 		"geohashes": len(c.geohashes),
+		"precision": precision,
 	}).Debug("Client subscribed to region")
 }
 
@@ -339,55 +345,63 @@ func (h *WebSocketHandler) getNextSequence() uint64 {
 
 // BroadcastUpdate отправляет обновление всем подключенным клиентам
 func (h *WebSocketHandler) BroadcastUpdate(updateType pb.UpdateType, action pb.Action, data proto.Message) {
-	// Сериализуем данные
-	dataBytes, err := proto.Marshal(data)
-	if err != nil {
-		h.logger.WithField("error", err).Error("Failed to marshal update data")
-		return
+	// Создаем пакет обновления
+	packet := &UpdatePacket{
+		Type:      updateType,
+		Timestamp: time.Now(),
 	}
-
-	// Создаем обновление
-	update := &pb.Update{
-		Type:     updateType,
-		Action:   action,
-		Data:     dataBytes,
-		Sequence: h.getNextSequence(),
-	}
-
-	// Создаем батч с одним обновлением
-	batch := &pb.UpdateBatch{
-		Updates:   []*pb.Update{update},
-		Timestamp: time.Now().Unix(),
-	}
-
-	batchBytes, err := proto.Marshal(batch)
-	if err != nil {
-		h.logger.WithField("error", err).Error("Failed to marshal update batch")
-		return
-	}
-
-	// Отправляем всем клиентам
-	h.clientsMu.RLock()
-	for client := range h.clients {
-		if h.shouldSendUpdate(client, data) {
-			select {
-			case client.send <- batchBytes:
-			default:
-				// Канал клиента заполнен, отключаем его
-				h.clientsMu.RUnlock()
-				h.unregisterClient(client)
-				h.clientsMu.RLock()
-			}
+	
+	// Заполняем данные в зависимости от типа
+	switch v := data.(type) {
+	case *pb.Pilot:
+		packet.Pilot = &models.Pilot{
+			Address:    v.Address,
+			Type:       models.PilotType(v.Type),
+			Name:       v.Name,
+			Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
+			Altitude:   int32(v.Altitude),
+			Speed:      v.Speed,
+			Heading:    v.Heading,
+			LastSeen:   time.Unix(v.LastSeen, 0),
 		}
+		// Добавляем в пространственный индекс
+		h.spatial.Insert(packet.Pilot)
+		
+	case *pb.Thermal:
+		packet.Thermal = &models.Thermal{
+			ID:         v.Id,
+			Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
+			Altitude:   int32(v.Altitude),
+			ClimbRate:  v.ClimbRate,
+			Quality:    int32(v.Quality),
+			PilotCount: int32(v.PilotCount),
+			LastSeen:   time.Unix(v.LastSeen, 0),
+		}
+		// Добавляем в пространственный индекс
+		h.spatial.Insert(packet.Thermal)
+		
+	case *pb.Station:
+		packet.Station = &models.Station{
+			ChipID:      v.ChipId,
+			Name:        v.Name,
+			Position:    &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
+			LastSeen:    time.Unix(v.LastSeen, 0),
+		}
+		// Добавляем в пространственный индекс
+		h.spatial.Insert(packet.Station)
+		
+	default:
+		h.logger.Error("Unknown update type")
+		return
 	}
-	h.clientsMu.RUnlock()
-
-	h.logger.WithFields(map[string]interface{}{
-		"type":        updateType.String(),
-		"action":      action.String(),
-		"clients":     len(h.clients),
-		"sequence":    update.Sequence,
-	}).Debug("Broadcasted update to clients")
+	
+	// Отправляем через broadcast manager
+	h.broadcast.Broadcast(packet)
+	
+	h.logger.WithFields(logrus.Fields{
+		"type":   updateType.String(),
+		"action": action.String(),
+	}).Debug("Update sent to broadcast manager")
 }
 
 // shouldSendUpdate проверяет, нужно ли отправлять обновление клиенту
@@ -437,17 +451,35 @@ func calculateDistance(lat1, lon1, lat2, lon2 float64) float64 {
 
 // GetStats возвращает статистику WebSocket handler
 func (h *WebSocketHandler) GetStats() map[string]interface{} {
-	h.clientsMu.RLock()
-	clientCount := len(h.clients)
-	h.clientsMu.RUnlock()
-
 	h.sequenceMu.Lock()
 	currentSequence := h.sequence
 	h.sequenceMu.Unlock()
 
+	// Получаем метрики из broadcast manager
+	broadcastMetrics := h.broadcast.GetMetrics()
+	
+	// Получаем метрики из spatial index
+	spatialMetrics := h.spatial.GetMetrics()
+
 	return map[string]interface{}{
-		"connected_clients": clientCount,
-		"current_sequence":  currentSequence,
-		"total_updates":     currentSequence,
+		"connected_clients":     broadcastMetrics.ClientsActive,
+		"geohash_groups":       broadcastMetrics.GroupsActive,
+		"current_sequence":     currentSequence,
+		"total_updates":        broadcastMetrics.UpdatesReceived,
+		"updates_broadcast":    broadcastMetrics.UpdatesBroadcast,
+		"avg_broadcast_ms":     broadcastMetrics.AvgBroadcastTimeMs,
+		"avg_recipients":       broadcastMetrics.AvgRecipientsCount,
+		"spatial_objects":      h.spatial.Size(),
+		"spatial_queries":      spatialMetrics.QueryCount,
+		"spatial_cache_hits":   spatialMetrics.CacheHits,
+		"spatial_cache_misses": spatialMetrics.CacheMisses,
+		"avg_query_time_ms":    spatialMetrics.AvgQueryTimeMs,
 	}
+}
+
+// unregisterClient удаляет клиента из всех подписок
+func (h *WebSocketHandler) unregisterClient(c *Client) {
+	h.broadcast.Unregister(c)
+	close(c.send)
+	h.logger.WithField("client", c.conn.RemoteAddr()).Debug("Client unregistered")
 }

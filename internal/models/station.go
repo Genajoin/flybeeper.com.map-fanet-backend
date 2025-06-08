@@ -8,11 +8,12 @@ import (
 // Station представляет метеостанцию
 type Station struct {
 	// Идентификация
-	ID   string `json:"id"`             // Device ID станции
-	Name string `json:"name,omitempty"` // Название станции
+	ID     string `json:"id"`             // Device ID станции
+	ChipID string `json:"chip_id"`        // Chip ID станции (алиас)
+	Name   string `json:"name,omitempty"` // Название станции
 
 	// Позиция
-	Position GeoPoint `json:"position"` // Координаты станции
+	Position *GeoPoint `json:"position"` // Координаты станции
 
 	// Погодные данные
 	Temperature   int8   `json:"temperature"`            // Температура (°C)
@@ -25,16 +26,51 @@ type Station struct {
 	// Статус
 	Battery    uint8     `json:"battery,omitempty"` // Заряд батареи (%)
 	LastUpdate time.Time `json:"last_update"`       // Время последнего обновления
+	LastSeen   time.Time `json:"last_seen"`         // Время последнего обновления (алиас)
+}
+
+// GetID возвращает уникальный идентификатор для geo.Object
+func (s *Station) GetID() string {
+	if s.ChipID != "" {
+		return s.ChipID
+	}
+	return s.ID
+}
+
+// GetLatitude возвращает широту для geo.Object
+func (s *Station) GetLatitude() float64 {
+	if s.Position != nil {
+		return s.Position.Latitude
+	}
+	return 0
+}
+
+// GetLongitude возвращает долготу для geo.Object
+func (s *Station) GetLongitude() float64 {
+	if s.Position != nil {
+		return s.Position.Longitude
+	}
+	return 0
+}
+
+// GetTimestamp возвращает время последнего обновления для geo.Object
+func (s *Station) GetTimestamp() time.Time {
+	if !s.LastSeen.IsZero() {
+		return s.LastSeen
+	}
+	return s.LastUpdate
 }
 
 // Validate проверяет корректность данных станции
 func (s *Station) Validate() error {
-	if s.ID == "" {
-		return fmt.Errorf("id is required")
+	if s.ID == "" && s.ChipID == "" {
+		return fmt.Errorf("id or chip_id is required")
 	}
 
-	if err := s.Position.Validate(); err != nil {
-		return fmt.Errorf("position: %w", err)
+	if s.Position != nil {
+		if err := s.Position.Validate(); err != nil {
+			return fmt.Errorf("position: %w", err)
+		}
 	}
 
 	// Проверка температуры (реалистичные значения)
