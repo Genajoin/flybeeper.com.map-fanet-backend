@@ -10,6 +10,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/flybeeper/fanet-backend/internal/config"
+	"github.com/flybeeper/fanet-backend/internal/metrics"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
 )
@@ -122,6 +123,7 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 		return fmt.Errorf("pilot cannot be nil")
 	}
 
+	start := time.Now()
 	pipe := r.client.Pipeline()
 
 	// Сохраняем в геопространственный индекс
@@ -169,6 +171,7 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	// Выполняем все операции в батче
 	_, err := pipe.Exec(ctx)
 	if err != nil {
+		metrics.RedisOperationErrors.WithLabelValues("save_pilot").Inc()
 		return fmt.Errorf("failed to save pilot: %w", err)
 	}
 
@@ -177,6 +180,10 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 
 	r.logger.WithField("device_id", pilot.DeviceID).WithField("lat", pilot.Position.Latitude).WithField("lon", pilot.Position.Longitude).Debug("Saved pilot to Redis")
 
+	// Записываем метрики
+	duration := time.Since(start).Seconds()
+	metrics.RedisOperationDuration.WithLabelValues("save_pilot").Observe(duration)
+	
 	return nil
 }
 
@@ -220,6 +227,8 @@ func (r *RedisRepository) UpdatePilotName(ctx context.Context, deviceID string, 
 
 // GetPilotsInRadius возвращает пилотов в указанном радиусе
 func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Pilot, error) {
+	start := time.Now()
+	
 	// Поиск по геопространственному индексу
 	locations, err := r.client.GeoRadius(ctx, PilotsGeoKey, center.Longitude, center.Latitude, &redis.GeoRadiusQuery{
 		Radius:    radiusKM,
@@ -303,6 +312,10 @@ func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.G
 		"found": len(pilots),
 	}).Debug("Retrieved pilots in radius")
 
+	// Записываем метрики
+	duration := time.Since(start).Seconds()
+	metrics.RedisOperationDuration.WithLabelValues("get_pilots_radius").Observe(duration)
+	
 	return pilots, nil
 }
 
@@ -312,6 +325,7 @@ func (r *RedisRepository) SaveThermal(ctx context.Context, thermal *models.Therm
 		return fmt.Errorf("thermal cannot be nil")
 	}
 
+	start := time.Now()
 	pipe := r.client.Pipeline()
 
 	// Сохраняем в геопространственный индекс
@@ -338,11 +352,17 @@ func (r *RedisRepository) SaveThermal(ctx context.Context, thermal *models.Therm
 
 	r.logger.WithField("thermal_id", thermal.ID).WithField("lat", thermal.Center.Latitude).WithField("lon", thermal.Center.Longitude).Debug("Saved thermal to Redis")
 
+	// Записываем метрики
+	duration := time.Since(start).Seconds()
+	metrics.RedisOperationDuration.WithLabelValues("save_thermal").Observe(duration)
+	
 	return nil
 }
 
 // GetThermalsInRadius возвращает термики в указанном радиусе
 func (r *RedisRepository) GetThermalsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Thermal, error) {
+	start := time.Now()
+	
 	locations, err := r.client.GeoRadius(ctx, ThermalsGeoKey, center.Longitude, center.Latitude, &redis.GeoRadiusQuery{
 		Radius:    radiusKM,
 		Unit:      "km",
@@ -399,6 +419,10 @@ func (r *RedisRepository) GetThermalsInRadius(ctx context.Context, center models
 		thermals = append(thermals, &thermal)
 	}
 
+	// Записываем метрики
+	duration := time.Since(start).Seconds()
+	metrics.RedisOperationDuration.WithLabelValues("get_thermals_radius").Observe(duration)
+	
 	return thermals, nil
 }
 
@@ -540,7 +564,7 @@ func (r *RedisRepository) GetStats(ctx context.Context) (map[string]interface{},
 func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, location *redis.GeoLocation) (*models.Pilot, error) {
 	pilot := &models.Pilot{
 		DeviceID: deviceID,
-		Position: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  location.Latitude,
 			Longitude: location.Longitude,
 		},
@@ -565,7 +589,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 
 	if speedStr, ok := data["speed"]; ok {
 		if speed, err := strconv.ParseFloat(speedStr, 64); err == nil {
-			pilot.Speed = uint16(speed)
+			pilot.Speed = float32(speed)
 		}
 	}
 
@@ -577,7 +601,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 
 	if courseStr, ok := data["course"]; ok {
 		if course, err := strconv.ParseFloat(courseStr, 64); err == nil {
-			pilot.Heading = uint16(course)
+			pilot.Heading = float32(course)
 		}
 	}
 
@@ -624,13 +648,13 @@ func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string,
 
 	if qualityStr, ok := data["quality"]; ok {
 		if quality, err := strconv.Atoi(qualityStr); err == nil {
-			thermal.Quality = uint8(quality)
+			thermal.Quality = int32(quality)
 		}
 	}
 
 	if climbStr, ok := data["climb"]; ok {
 		if climb, err := strconv.ParseFloat(climbStr, 64); err == nil {
-			thermal.ClimbRate = int16(climb * 10) // м/с -> м/с * 10
+			thermal.ClimbRate = float32(climb) // м/с -> м/с * 10
 		}
 	}
 
@@ -659,7 +683,7 @@ func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string,
 func (r *RedisRepository) mapToStation(stationID string, data map[string]string, location *redis.GeoLocation) (*models.Station, error) {
 	station := &models.Station{
 		ID: stationID,
-		Position: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  location.Latitude,
 			Longitude: location.Longitude,
 		},

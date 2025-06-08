@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flybeeper/fanet-backend/internal/metrics"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
@@ -133,6 +134,10 @@ func (bw *BatchWriter) start() {
 	// Worker для станций
 	bw.wg.Add(1)
 	go bw.stationWorker()
+	
+	// Worker для периодического обновления метрик
+	bw.wg.Add(1)
+	go bw.metricsWorker()
 
 	bw.logger.WithField("batch_size", bw.config.BatchSize).
 		WithField("flush_interval", bw.config.FlushInterval).
@@ -148,6 +153,9 @@ func (bw *BatchWriter) QueuePilot(pilot *models.Pilot) error {
 		bw.metrics.PilotsQueued++
 		bw.metrics.QueueDepthPilots = int64(len(bw.pilotChan))
 		bw.metrics.mu.Unlock()
+		
+		// Обновляем Prometheus метрику
+		metrics.MySQLQueueSize.WithLabelValues("pilots").Set(float64(len(bw.pilotChan)))
 		return nil
 	case <-bw.ctx.Done():
 		return fmt.Errorf("batch writer is shutting down")
@@ -155,6 +163,9 @@ func (bw *BatchWriter) QueuePilot(pilot *models.Pilot) error {
 		bw.metrics.mu.Lock()
 		bw.metrics.PilotsErrors++
 		bw.metrics.mu.Unlock()
+		
+		// Увеличиваем счетчик ошибок
+		metrics.MySQLWriteErrors.WithLabelValues("queue_full").Inc()
 		return fmt.Errorf("pilot queue is full")
 	}
 }
@@ -167,6 +178,9 @@ func (bw *BatchWriter) QueueThermal(thermal *models.Thermal) error {
 		bw.metrics.ThermalsQueued++
 		bw.metrics.QueueDepthThermals = int64(len(bw.thermalChan))
 		bw.metrics.mu.Unlock()
+		
+		// Обновляем Prometheus метрику
+		metrics.MySQLQueueSize.WithLabelValues("thermals").Set(float64(len(bw.thermalChan)))
 		return nil
 	case <-bw.ctx.Done():
 		return fmt.Errorf("batch writer is shutting down")
@@ -174,6 +188,9 @@ func (bw *BatchWriter) QueueThermal(thermal *models.Thermal) error {
 		bw.metrics.mu.Lock()
 		bw.metrics.ThermalsErrors++
 		bw.metrics.mu.Unlock()
+		
+		// Увеличиваем счетчик ошибок
+		metrics.MySQLWriteErrors.WithLabelValues("queue_full").Inc()
 		return fmt.Errorf("thermal queue is full")
 	}
 }
@@ -186,6 +203,9 @@ func (bw *BatchWriter) QueueStation(station *models.Station) error {
 		bw.metrics.StationsQueued++
 		bw.metrics.QueueDepthStations = int64(len(bw.stationChan))
 		bw.metrics.mu.Unlock()
+		
+		// Обновляем Prometheus метрику
+		metrics.MySQLQueueSize.WithLabelValues("stations").Set(float64(len(bw.stationChan)))
 		return nil
 	case <-bw.ctx.Done():
 		return fmt.Errorf("batch writer is shutting down")
@@ -193,6 +213,9 @@ func (bw *BatchWriter) QueueStation(station *models.Station) error {
 		bw.metrics.mu.Lock()
 		bw.metrics.StationsErrors++
 		bw.metrics.mu.Unlock()
+		
+		// Увеличиваем счетчик ошибок
+		metrics.MySQLWriteErrors.WithLabelValues("queue_full").Inc()
 		return fmt.Errorf("station queue is full")
 	}
 }
@@ -300,6 +323,10 @@ func (bw *BatchWriter) flushPilots() {
 	batch := make([]*models.Pilot, len(bw.pilotBuffer))
 	copy(batch, bw.pilotBuffer)
 	bw.pilotBuffer = bw.pilotBuffer[:0] // Очищаем буфер
+	
+	// Трекаем размер батча
+	batchSize := len(batch)
+	metrics.MySQLBatchSize.WithLabelValues("thermals").Observe(float64(batchSize))
 
 	// Выполняем с retry
 	err := bw.retryOperation(func() error {
@@ -307,6 +334,9 @@ func (bw *BatchWriter) flushPilots() {
 	})
 
 	duration := time.Since(start)
+	
+	// Трекаем длительность операции
+	metrics.MySQLBatchDuration.WithLabelValues("pilots").Observe(duration.Seconds())
 
 	bw.metrics.mu.Lock()
 	if err != nil {
@@ -315,6 +345,9 @@ func (bw *BatchWriter) flushPilots() {
 			WithField("duration", duration).
 			WithField("error", err).
 			Error("Failed to flush pilots batch")
+		
+		// Увеличиваем счетчик ошибок
+		metrics.MySQLWriteErrors.WithLabelValues("queue_full").Inc()
 	} else {
 		bw.metrics.PilotsBatched++
 		bw.metrics.PilotsProcessed += int64(len(batch))
@@ -325,6 +358,9 @@ func (bw *BatchWriter) flushPilots() {
 	bw.metrics.LastFlushDuration = duration
 	bw.metrics.LastBatchSize = len(batch)
 	bw.metrics.mu.Unlock()
+	
+	// Обновляем метрику размера очереди после flush
+	metrics.MySQLQueueSize.WithLabelValues("pilots").Set(float64(len(bw.pilotChan)))
 }
 
 // flushThermals сохраняет батч термиков в MySQL
@@ -337,12 +373,19 @@ func (bw *BatchWriter) flushThermals() {
 	batch := make([]*models.Thermal, len(bw.thermalBuffer))
 	copy(batch, bw.thermalBuffer)
 	bw.thermalBuffer = bw.thermalBuffer[:0]
+	
+	// Трекаем размер батча
+	batchSize := len(batch)
+	metrics.MySQLBatchSize.WithLabelValues("thermals").Observe(float64(batchSize))
 
 	err := bw.retryOperation(func() error {
 		return bw.mysqlRepo.SaveThermalsBatch(bw.ctx, batch)
 	})
 
 	duration := time.Since(start)
+	
+	// Трекаем длительность операции
+	metrics.MySQLBatchDuration.WithLabelValues("pilots").Observe(duration.Seconds())
 
 	bw.metrics.mu.Lock()
 	if err != nil {
@@ -351,6 +394,9 @@ func (bw *BatchWriter) flushThermals() {
 			WithField("duration", duration).
 			WithField("error", err).
 			Error("Failed to flush thermals batch")
+		
+		// Увеличиваем счетчик ошибок
+		metrics.MySQLWriteErrors.WithLabelValues("queue_full").Inc()
 	} else {
 		bw.metrics.ThermalsBatched++
 		bw.metrics.ThermalsProcessed += int64(len(batch))
@@ -359,6 +405,9 @@ func (bw *BatchWriter) flushThermals() {
 			Debug("Flushed thermals batch to MySQL")
 	}
 	bw.metrics.mu.Unlock()
+	
+	// Обновляем метрику размера очереди после flush
+	metrics.MySQLQueueSize.WithLabelValues("thermals").Set(float64(len(bw.thermalChan)))
 }
 
 // flushStations сохраняет батч станций в MySQL
@@ -371,12 +420,19 @@ func (bw *BatchWriter) flushStations() {
 	batch := make([]*models.Station, len(bw.stationBuffer))
 	copy(batch, bw.stationBuffer)
 	bw.stationBuffer = bw.stationBuffer[:0]
+	
+	// Трекаем размер батча
+	batchSize := len(batch)
+	metrics.MySQLBatchSize.WithLabelValues("thermals").Observe(float64(batchSize))
 
 	err := bw.retryOperation(func() error {
 		return bw.mysqlRepo.SaveStationsBatch(bw.ctx, batch)
 	})
 
 	duration := time.Since(start)
+	
+	// Трекаем длительность операции
+	metrics.MySQLBatchDuration.WithLabelValues("pilots").Observe(duration.Seconds())
 
 	bw.metrics.mu.Lock()
 	if err != nil {
@@ -385,6 +441,9 @@ func (bw *BatchWriter) flushStations() {
 			WithField("duration", duration).
 			WithField("error", err).
 			Error("Failed to flush stations batch")
+		
+		// Увеличиваем счетчик ошибок
+		metrics.MySQLWriteErrors.WithLabelValues("queue_full").Inc()
 	} else {
 		bw.metrics.StationsBatched++
 		bw.metrics.StationsProcessed += int64(len(batch))
@@ -393,6 +452,9 @@ func (bw *BatchWriter) flushStations() {
 			Debug("Flushed stations batch to MySQL")
 	}
 	bw.metrics.mu.Unlock()
+	
+	// Обновляем метрику размера очереди после flush
+	metrics.MySQLQueueSize.WithLabelValues("stations").Set(float64(len(bw.stationChan)))
 }
 
 // retryOperation выполняет операцию с повторами
@@ -433,6 +495,27 @@ func (bw *BatchWriter) GetMetrics() BatchMetrics {
 	bw.metrics.QueueDepthStations = int64(len(bw.stationChan))
 
 	return *bw.metrics
+}
+
+// metricsWorker периодически обновляет метрики
+func (bw *BatchWriter) metricsWorker() {
+	defer bw.wg.Done()
+	
+	ticker := time.NewTicker(10 * time.Second) // Обновляем метрики каждые 10 секунд
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			// Обновляем метрики размеров очередей
+			metrics.MySQLQueueSize.WithLabelValues("pilots").Set(float64(len(bw.pilotChan)))
+			metrics.MySQLQueueSize.WithLabelValues("thermals").Set(float64(len(bw.thermalChan)))
+			metrics.MySQLQueueSize.WithLabelValues("stations").Set(float64(len(bw.stationChan)))
+			
+		case <-bw.ctx.Done():
+			return
+		}
+	}
 }
 
 // Stop останавливает BatchWriter и дожидается завершения всех операций

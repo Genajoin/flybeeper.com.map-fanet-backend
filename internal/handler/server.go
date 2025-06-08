@@ -8,10 +8,12 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"flybeeper.com/fanet-api/internal/auth"
-	"flybeeper.com/fanet-api/internal/config"
-	"flybeeper.com/fanet-api/internal/repository"
-	"flybeeper.com/fanet-api/pkg/utils"
+	"github.com/flybeeper/fanet-backend/internal/auth"
+	"github.com/flybeeper/fanet-backend/internal/config"
+	"github.com/flybeeper/fanet-backend/internal/metrics"
+	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/pkg/utils"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -44,6 +46,7 @@ func NewServer(cfg *config.Config, repo repository.Repository, redisClient *redi
 	router.Use(RateLimitMiddleware())
 	router.Use(CompressionMiddleware())
 	router.Use(SecurityHeadersMiddleware())
+	router.Use(metrics.HTTPMetricsMiddleware())
 
 	// REST handler
 	restHandler := NewRESTHandler(repo, logger)
@@ -114,11 +117,11 @@ func (s *Server) setupRoutes() {
 	// WebSocket endpoint (будет реализован позже)
 	s.router.GET("/ws/v1/updates", s.websocketHandler)
 
-	// Метрики (для мониторинга)
-	s.router.GET("/metrics", s.metricsHandler)
+	// Prometheus метрики
+	s.router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	
 	// pprof endpoints для профилирования (только в development)
-	if s.config.LogLevel == "debug" {
+	if s.config.Environment == "development" {
 		pprofGroup := s.router.Group("/debug/pprof")
 		{
 			pprofGroup.GET("/", gin.WrapF(pprof.Index))
@@ -168,14 +171,6 @@ func (s *Server) websocketHandler(c *gin.Context) {
 	s.wsHandler.HandleWebSocket(c)
 }
 
-// Metrics handler 
-func (s *Server) metricsHandler(c *gin.Context) {
-	wsStats := s.wsHandler.GetStats()
-	c.JSON(http.StatusOK, gin.H{
-		"websocket": wsStats,
-		"uptime_seconds": time.Now().Unix(),
-	})
-}
 
 // ==================== Middleware ====================
 

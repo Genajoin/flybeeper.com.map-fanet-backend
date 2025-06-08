@@ -3,6 +3,8 @@ package models
 import (
 	"fmt"
 	"time"
+	
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 )
 
 // PilotType тип летательного аппарата
@@ -165,5 +167,39 @@ func (p *Pilot) GetColor() string {
 	}
 	
 	return fmt.Sprintf("#%02X%02X%02X", r, g, b)
+}
+
+// TrackPoint представляет точку трека пилота
+type TrackPoint struct {
+	Position  *GeoPoint `json:"position"`  // Координаты
+	Altitude  int32     `json:"altitude"`  // Высота (м)
+	Speed     float32   `json:"speed"`     // Скорость (км/ч)
+	Climb     float32   `json:"climb"`     // Вариометр (м/с)
+	Timestamp time.Time `json:"timestamp"` // Время записи
+}
+
+// ToProto конвертирует Pilot в protobuf
+func (p *Pilot) ToProto() *pb.Pilot {
+	pilot := &pb.Pilot{
+		Addr:     0, // TODO: конвертировать DeviceID в uint32
+		Name:     p.Name,
+		Type:     pb.PilotType(p.Type),
+		Altitude: p.Altitude,
+		Speed:    p.Speed,
+		Climb:    float32(p.ClimbRate) / 10.0, // Конвертируем в м/с
+		Course:   p.Heading,
+		LastUpdate: p.LastUpdate.Unix(),
+		TrackOnline: p.TrackOnline,
+		Battery:  uint32(p.Battery),
+	}
+	
+	if p.Position != nil {
+		pilot.Position = &pb.GeoPoint{
+			Latitude:  p.Position.Latitude,
+			Longitude: p.Position.Longitude,
+		}
+	}
+	
+	return pilot
 }
 

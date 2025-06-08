@@ -278,14 +278,14 @@ func convertFANETToPilot(msg *mqtt.FANETMessage) *models.Pilot {
 		DeviceID:     msg.DeviceID,
 		Name:         "", // Имя приходит в отдельном сообщении Type 2
 		AircraftType: airData.AircraftType,
-		Position: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  airData.Latitude,
 			Longitude: airData.Longitude,
 			Altitude:  int16(airData.Altitude),
 		},
-		Speed:       airData.Speed,
+		Speed:       float32(airData.Speed),
 		ClimbRate:   airData.ClimbRate,
-		Heading:     airData.Heading,
+		Heading:     float32(airData.Heading),
 		TrackOnline: true, // Факт получения сообщения означает онлайн
 		Battery:     100,  // Нет в FANET Type 1
 		LastUpdate:  msg.Timestamp,
@@ -307,8 +307,8 @@ func convertFANETToThermal(msg *mqtt.FANETMessage) *models.Thermal {
 			Longitude: thermalData.Longitude,
 		},
 		Altitude:      thermalData.Altitude,
-		Quality:       uint8(thermalData.Strength / 20), // Конвертируем 0-100 в 0-5
-		ClimbRate:     thermalData.ClimbRate,
+		Quality:       int32(thermalData.Strength / 20), // Конвертируем 0-100 в 0-5
+		ClimbRate:     float32(thermalData.ClimbRate),
 		WindSpeed:     0,  // Нет в FANET Thermal
 		WindDirection: 0,  // Нет в FANET Thermal
 		Timestamp:     msg.Timestamp,
@@ -330,7 +330,7 @@ func convertFANETToStation(msg *mqtt.FANETMessage) *models.Station {
 	return &models.Station{
 		ID:   msg.DeviceID,
 		Name: "", // Имя приходит в отдельном сообщении Type 2
-		Position: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  0, // Координаты станции не в FANET Weather
 			Longitude: 0, // Координаты станции не в FANET Weather
 		},

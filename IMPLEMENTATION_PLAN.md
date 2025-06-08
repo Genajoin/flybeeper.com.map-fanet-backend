@@ -148,7 +148,7 @@
 - [ ] docker-compose для разработки
 - [ ] Health checks
 
-### 5.2 Kubernetes
+### 5.2 Kubernetes (пропустить)
 - [ ] Deployment манифесты
 - [ ] Service и Ingress
 - [ ] ConfigMap и Secrets

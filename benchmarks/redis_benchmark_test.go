@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"flybeeper.com/fanet-api/internal/models"
-	"flybeeper.com/fanet-api/internal/repository"
+	"github.com/flybeeper/fanet-backend/internal/models"
+	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/redis/go-redis/v9"
 )
 

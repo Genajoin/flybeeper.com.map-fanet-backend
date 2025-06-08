@@ -1,0 +1,92 @@
+groups:
+  - name: fanet-api-alerts
+    rules:
+      - alert: FANETAPIDown
+        expr: up{job="fanet-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "FANET API is down"
+          description: "FANET API has been down for more than 1 minute."
+
+      - alert: HighErrorRate
+        expr: (rate(fanet_http_requests_total{status=~"5.."}[5m]) / rate(fanet_http_requests_total[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP error rate"
+          description: "HTTP error rate is {{ $value }}% which is above 5%"
+
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(fanet_http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High HTTP response time"
+          description: "95th percentile response time is {{ $value }}s"
+
+      - alert: MQTTDisconnected
+        expr: fanet_mqtt_connection_status == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MQTT connection lost"
+          description: "MQTT broker connection has been lost for more than 2 minutes"
+
+      - alert: HighMemoryUsage
+        expr: (go_memstats_heap_inuse_bytes / go_memstats_heap_sys_bytes) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}% which is above 80%"
+
+      - alert: TooManyGoroutines
+        expr: go_goroutines > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Too many goroutines"
+          description: "Number of goroutines is {{ $value }} which is above 1000"
+
+      - alert: MySQLQueueFull
+        expr: fanet_mysql_queue_size > 8000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MySQL queue nearly full"
+          description: "MySQL {{ $labels.queue_type }} queue size is {{ $value }}"
+
+      - alert: HighMySQLErrors
+        expr: rate(fanet_mysql_write_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High MySQL write error rate"
+          description: "MySQL write error rate is {{ $value }}/sec"
+
+      - alert: WebSocketConnectionDrop
+        expr: delta(fanet_websocket_connections_active[5m]) < -10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebSocket connection drop"
+          description: "WebSocket connections dropped by {{ $value }} in 5 minutes"
+
+      - alert: HighWebSocketErrors
+        expr: rate(fanet_websocket_errors_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High WebSocket error rate"
+          description: "WebSocket error rate is {{ $value }}/sec"

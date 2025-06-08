@@ -3,6 +3,8 @@ package models
 import (
 	"fmt"
 	"time"
+	
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 )
 
 // Thermal представляет термический поток
@@ -170,13 +172,13 @@ func (t *Thermal) FromRedisHash(id string, data map[string]string) error {
 	if quality, ok := data["quality"]; ok {
 		var q int
 		fmt.Sscanf(quality, "%d", &q)
-		t.Quality = uint8(q)
+		t.Quality = int32(q)
 	}
 
 	if climb, ok := data["climb_rate"]; ok {
 		var c int
 		fmt.Sscanf(climb, "%d", &c)
-		t.ClimbRate = int16(c)
+		t.ClimbRate = float32(c)
 	}
 
 	if windSpeed, ok := data["wind_speed"]; ok {
@@ -268,11 +270,39 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 		}
 
 		// Усредняем характеристики
-		result.ClimbRate = int16(sumClimb / float32(count))
-		result.Quality = uint8(sumQuality / float32(count))
+		result.ClimbRate = sumClimb / float32(count)
+		result.Quality = int32(sumQuality / float32(count))
 
 		merged = append(merged, result)
 	}
 
 	return merged
+}
+
+// ToProto конвертирует Thermal в protobuf
+func (t *Thermal) ToProto() *pb.Thermal {
+	thermal := &pb.Thermal{
+		Id:       0, // TODO: конвертировать ID в uint64
+		Addr:     0, // TODO: конвертировать ReportedBy в uint32
+		Altitude: t.Altitude,
+		Quality:  uint32(t.Quality),
+		Climb:    t.ClimbRate,
+		WindSpeed:   float32(t.WindSpeed),
+		WindHeading: float32(t.WindDirection),
+		Timestamp:   t.Timestamp.Unix(),
+	}
+	
+	if t.Position != nil {
+		thermal.Position = &pb.GeoPoint{
+			Latitude:  t.Position.Latitude,
+			Longitude: t.Position.Longitude,
+		}
+	} else {
+		thermal.Position = &pb.GeoPoint{
+			Latitude:  t.Center.Latitude,
+			Longitude: t.Center.Longitude,
+		}
+	}
+	
+	return thermal
 }

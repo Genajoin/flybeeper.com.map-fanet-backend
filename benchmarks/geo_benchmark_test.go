@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"flybeeper.com/fanet-api/internal/geo"
-	"flybeeper.com/fanet-api/internal/models"
+	"github.com/flybeeper/fanet-backend/internal/geo"
+	"github.com/flybeeper/fanet-backend/internal/models"
 )
 
 // mockObject implements geo.Object interface for testing

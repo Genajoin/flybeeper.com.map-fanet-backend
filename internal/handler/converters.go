@@ -268,14 +268,14 @@ func protoToModelsPilots(pilots []*pb.Pilot) []*models.Pilot {
 			DeviceID:     formatAddr(pilot.Addr),
 			Name:         pilot.Name,
 			AircraftType: protoToAircraftType(pilot.Type),
-			Position: models.GeoPoint{
+			Position: &models.GeoPoint{
 				Latitude:  pilot.Position.Latitude,
 				Longitude: pilot.Position.Longitude,
 				Altitude:  int16(pilot.Altitude),
 			},
-			Speed:       uint16(pilot.Speed),
+			Speed:       float32(pilot.Speed),
 			ClimbRate:   int16(pilot.Climb * 100),
-			Heading:     uint16(pilot.Course),
+			Heading:     float32(pilot.Course),
 			TrackOnline: pilot.TrackOnline,
 			Battery:     uint8(pilot.Battery),
 			LastUpdate:  time.Unix(pilot.LastUpdate, 0),
@@ -295,8 +295,8 @@ func protoToModelsThermals(thermals []*pb.Thermal) []*models.Thermal {
 				Longitude: thermal.Position.Longitude,
 			},
 			Altitude:      thermal.Altitude,
-			Quality:       uint8(thermal.Quality),
-			ClimbRate:     int16(thermal.Climb * 100),
+			Quality:       int32(thermal.Quality),
+			ClimbRate:     float32(thermal.Climb),
 			WindSpeed:     uint8(thermal.WindSpeed * 3.6),
 			WindDirection: uint16(thermal.WindHeading),
 			Timestamp:     time.Unix(thermal.Timestamp, 0),
@@ -311,7 +311,7 @@ func protoToModelsStations(stations []*pb.Station) []*models.Station {
 		result[i] = &models.Station{
 			ID:   formatAddr(station.Addr),
 			Name: station.Name,
-			Position: models.GeoPoint{
+			Position: &models.GeoPoint{
 				Latitude:  station.Position.Latitude,
 				Longitude: station.Position.Longitude,
 			},

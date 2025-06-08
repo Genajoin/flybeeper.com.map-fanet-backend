@@ -8,6 +8,7 @@ import (
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/flybeeper/fanet-backend/internal/config"
+	"github.com/flybeeper/fanet-backend/internal/metrics"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
 )
 
@@ -75,6 +76,7 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 		c.mu.Unlock()
 		
 		c.logger.WithField("broker", cfg.URL).Info("Connected to MQTT broker")
+		metrics.MQTTConnectionStatus.Set(1)
 		
 		// Подписка на топик после подключения
 		if token := client.Subscribe(cfg.TopicPrefix, 1, c.messageHandler()); token.Wait() && token.Error() != nil {
@@ -94,6 +96,7 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 		c.mu.Unlock()
 		
 		c.logger.WithField("error", err).Warn("Lost connection to MQTT broker")
+		metrics.MQTTConnectionStatus.Set(0)
 	})
 
 	// Callback при восстановлении соединения не поддерживается в данной версии
@@ -182,6 +185,7 @@ func (c *Client) messageHandler() mqtt.MessageHandler {
 					"error": err,
 					"payload_size": len(payload),
 				}).Error("Failed to parse FANET message")
+				metrics.MQTTParseErrors.Inc()
 				return
 			}
 			
@@ -206,6 +210,9 @@ func (c *Client) messageHandler() mqtt.MessageHandler {
 						"message_type": fanetMsg.Type,
 						"device_id": fanetMsg.DeviceID,
 					}).Debug("Successfully processed FANET message")
+					// Увеличиваем счетчик по типу пакета
+					packetType := fmt.Sprintf("%d", fanetMsg.Type)
+					metrics.MQTTMessagesReceived.WithLabelValues(packetType).Inc()
 				}
 			} else {
 				c.logger.WithField("topic", topic).Warn("Message handler is nil")

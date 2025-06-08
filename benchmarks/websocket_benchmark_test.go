@@ -4,10 +4,10 @@ import (
 	"testing"
 	"time"
 
-	"flybeeper.com/fanet-api/internal/geo"
-	"flybeeper.com/fanet-api/internal/handler"
-	"flybeeper.com/fanet-api/internal/models"
-	"flybeeper.com/fanet-api/pkg/pb"
+	"github.com/flybeeper/fanet-backend/internal/geo"
+	"github.com/flybeeper/fanet-backend/internal/handler"
+	"github.com/flybeeper/fanet-backend/internal/models"
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
 )
