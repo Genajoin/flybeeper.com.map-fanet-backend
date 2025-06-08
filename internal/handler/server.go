@@ -20,6 +20,7 @@ type Server struct {
 	logger     *utils.Logger
 	config     *config.Config
 	restHandler *RESTHandler
+	wsHandler  *WebSocketHandler
 }
 
 // NewServer создает новый HTTP сервер
@@ -41,12 +42,16 @@ func NewServer(cfg *config.Config, repo repository.Repository, logger *utils.Log
 
 	// REST handler
 	restHandler := NewRESTHandler(repo, logger)
+	
+	// WebSocket handler
+	wsHandler := NewWebSocketHandler(repo, logger)
 
 	server := &Server{
 		router:      router,
 		logger:      logger,
 		config:      cfg,
 		restHandler: restHandler,
+		wsHandler:   wsHandler,
 	}
 
 	// Настройка HTTP сервера с HTTP/2
@@ -62,6 +67,11 @@ func NewServer(cfg *config.Config, repo repository.Repository, logger *utils.Log
 	server.setupRoutes()
 
 	return server
+}
+
+// GetWebSocketHandler возвращает WebSocket handler для интеграции с MQTT
+func (s *Server) GetWebSocketHandler() *WebSocketHandler {
+	return s.wsHandler
 }
 
 // setupRoutes настраивает маршруты согласно OpenAPI спецификации
@@ -120,20 +130,17 @@ func (s *Server) healthCheck(c *gin.Context) {
 	})
 }
 
-// WebSocket handler (заглушка, будет реализован позже)
+// WebSocket handler 
 func (s *Server) websocketHandler(c *gin.Context) {
-	c.JSON(http.StatusNotImplemented, gin.H{
-		"code":    "not_implemented",
-		"message": "WebSocket endpoint not yet implemented",
-	})
+	s.wsHandler.HandleWebSocket(c)
 }
 
-// Metrics handler (простая реализация)
+// Metrics handler 
 func (s *Server) metricsHandler(c *gin.Context) {
+	wsStats := s.wsHandler.GetStats()
 	c.JSON(http.StatusOK, gin.H{
-		"http_requests_total": 0, // TODO: Реальные метрики
-		"active_connections":  0,
-		"uptime_seconds":      time.Now().Unix(),
+		"websocket": wsStats,
+		"uptime_seconds": time.Now().Unix(),
 	})
 }
 

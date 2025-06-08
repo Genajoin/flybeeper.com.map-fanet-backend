@@ -230,3 +230,28 @@ message SubscribeRequest {
 message UnsubscribeRequest {
   string reason = 1;       // Причина отписки
 }
+
+// Ответ на подписку
+message SubscribeResponse {
+  bool success = 1;
+  string error = 2;         // Если success = false
+  repeated string geohashes = 3; // Подписанные geohash регионы
+}
+
+// Приветственное сообщение
+message Welcome {
+  uint64 server_time = 1;     // Время сервера для синхронизации
+  uint64 sequence = 2;        // Текущий номер последовательности
+  string server_version = 3;  // Версия сервера
+}
+
+// Ping для поддержания соединения
+message Ping {
+  int64 timestamp = 1;
+}
+
+// Pong ответ
+message Pong {
+  int64 timestamp = 1;     // Echo от клиента
+  int64 server_time = 2;   // Текущее время сервера
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/mqtt"
 	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
 )
 
@@ -66,25 +67,8 @@ func main() {
 		}
 	}
 
-	// Создаем обработчик MQTT сообщений
-	messageHandler := func(msg *mqtt.FANETMessage) error {
-		// Конвертируем FANET сообщение в модели и сохраняем в Redis
-		switch msg.Type {
-		case 1: // Air tracking
-			if pilot := convertFANETToPilot(msg); pilot != nil {
-				return redisRepo.SavePilot(ctx, pilot)
-			}
-		case 9: // Thermal
-			if thermal := convertFANETToThermal(msg); thermal != nil {
-				return redisRepo.SaveThermal(ctx, thermal)
-			}
-		case 4: // Weather/Station
-			if station := convertFANETToStation(msg); station != nil {
-				return redisRepo.SaveStation(ctx, station)
-			}
-		}
-		return nil
-	}
+	// Создаем обработчик MQTT сообщений (сначала объявляем переменную)
+	var messageHandler func(msg *mqtt.FANETMessage) error
 
 	// Инициализируем MQTT клиент
 	mqttClient, err := mqtt.NewClient(&cfg.MQTT, logger, messageHandler)
@@ -101,6 +85,47 @@ func main() {
 
 	// Создаем HTTP сервер
 	server := handler.NewServer(cfg, redisRepo, logger)
+
+	// Получаем WebSocket handler для интеграции с MQTT
+	wsHandler := server.GetWebSocketHandler()
+
+	// Определяем messageHandler с поддержкой WebSocket трансляции
+	messageHandler = func(msg *mqtt.FANETMessage) error {
+		// Конвертируем FANET сообщение в модели и сохраняем в Redis
+		switch msg.Type {
+		case 1: // Air tracking
+			if pilot := convertFANETToPilot(msg); pilot != nil {
+				// Сохраняем в Redis
+				if err := redisRepo.SavePilot(ctx, pilot); err != nil {
+					return err
+				}
+				// Транслируем через WebSocket
+				pbPilot := convertPilotToProtobuf(pilot)
+				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_PILOT, pb.Action_ACTION_UPDATE, pbPilot)
+			}
+		case 9: // Thermal
+			if thermal := convertFANETToThermal(msg); thermal != nil {
+				// Сохраняем в Redis
+				if err := redisRepo.SaveThermal(ctx, thermal); err != nil {
+					return err
+				}
+				// Транслируем через WebSocket
+				pbThermal := convertThermalToProtobuf(thermal)
+				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_THERMAL, pb.Action_ACTION_ADD, pbThermal)
+			}
+		case 4: // Weather/Station
+			if station := convertFANETToStation(msg); station != nil {
+				// Сохраняем в Redis
+				if err := redisRepo.SaveStation(ctx, station); err != nil {
+					return err
+				}
+				// Транслируем через WebSocket
+				pbStation := convertStationToProtobuf(station)
+				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_STATION, pb.Action_ACTION_UPDATE, pbStation)
+			}
+		}
+		return nil
+	}
 
 	// Запускаем HTTP сервер в горутине
 	go func() {
@@ -262,5 +287,62 @@ func convertFANETToStation(msg *mqtt.FANETMessage) *models.Station {
 		Pressure:      weatherData.Pressure,
 		Battery:       100, // Нет в FANET Weather
 		LastUpdate:    msg.Timestamp,
+	}
+}
+
+// Конвертеры для Protobuf
+
+func convertPilotToProtobuf(pilot *models.Pilot) *pb.Pilot {
+	return &pb.Pilot{
+		Addr: 0, // TODO: конвертировать DeviceID в uint32
+		Name: pilot.Name,
+		Type: pb.PilotType(pilot.AircraftType),
+		Position: &pb.GeoPoint{
+			Latitude:  pilot.Position.Latitude,
+			Longitude: pilot.Position.Longitude,
+		},
+		Altitude:   int32(pilot.Position.Altitude),
+		Speed:      float32(pilot.Speed),
+		Climb:      float32(pilot.ClimbRate) / 10.0, // Конвертируем обратно в м/с
+		Course:     float32(pilot.Heading),
+		LastUpdate: pilot.LastUpdate.Unix(),
+		TrackOnline: pilot.TrackOnline,
+		Battery:    uint32(pilot.Battery),
+	}
+}
+
+func convertThermalToProtobuf(thermal *models.Thermal) *pb.Thermal {
+	return &pb.Thermal{
+		Id:   0, // TODO: конвертировать ID в uint64
+		Addr: 0, // TODO: конвертировать ReportedBy в uint32
+		Position: &pb.GeoPoint{
+			Latitude:  thermal.Center.Latitude,
+			Longitude: thermal.Center.Longitude,
+		},
+		Altitude:    int32(thermal.Altitude),
+		Quality:     uint32(thermal.Quality),
+		Climb:       float32(thermal.ClimbRate),
+		WindSpeed:   float32(thermal.WindSpeed),
+		WindHeading: float32(thermal.WindDirection),
+		Timestamp:   thermal.Timestamp.Unix(),
+	}
+}
+
+func convertStationToProtobuf(station *models.Station) *pb.Station {
+	return &pb.Station{
+		Addr: 0, // TODO: конвертировать ID в uint32
+		Name: station.Name,
+		Position: &pb.GeoPoint{
+			Latitude:  station.Position.Latitude,
+			Longitude: station.Position.Longitude,
+		},
+		Temperature: float32(station.Temperature),
+		WindSpeed:   float32(station.WindSpeed),
+		WindHeading: float32(station.WindDirection),
+		WindGusts:   float32(station.WindGusts),
+		Humidity:    uint32(station.Humidity),
+		Pressure:    float32(station.Pressure),
+		Battery:     uint32(station.Battery),
+		LastUpdate:  station.LastUpdate.Unix(),
 	}
 }
