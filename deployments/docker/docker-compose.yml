@@ -58,7 +58,7 @@ services:
       - MYSQL_PASSWORD=fanet
     volumes:
       - mysql-data:/var/lib/mysql
-      - ../../.ai-spec/database/legacy-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ../../ai-spec/database/legacy-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
     networks:
       - fanet-network
 

@@ -36,9 +36,9 @@ proto:
 	@echo "Generating protobuf files..."
 	@protoc --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		.ai-spec/api/fanet.proto
-	@mv .ai-spec/api/fanet.pb.go pkg/pb/
-	@mv .ai-spec/api/fanet_grpc.pb.go pkg/pb/
+		ai-spec/api/fanet.proto
+	@mv ai-spec/api/fanet.pb.go pkg/pb/
+	@mv ai-spec/api/fanet_grpc.pb.go pkg/pb/
 
 # Run tests
 test:

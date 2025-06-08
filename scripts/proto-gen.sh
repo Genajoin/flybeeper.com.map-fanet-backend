@@ -4,7 +4,7 @@
 
 set -e
 
-PROTO_DIR=".ai-spec/api"
+PROTO_DIR="ai-spec/api"
 OUT_DIR="pkg/pb"
 
 # Создаем директорию для вывода если не существует
