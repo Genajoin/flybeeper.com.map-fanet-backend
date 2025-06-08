@@ -15,7 +15,6 @@ import (
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
-	"github.com/flybeeper/fanet-backend/pkg/utils"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
@@ -25,7 +24,7 @@ type WebSocketHandler struct {
 	upgrader   websocket.Upgrader
 	repository repository.Repository
 	logger     *logrus.Entry
-	// broadcast  *BroadcastManager // Временно отключено
+	broadcast  *BroadcastManager
 	spatial    *geo.SpatialIndex
 	sequence   uint64
 	sequenceMu sync.Mutex
@@ -61,6 +60,9 @@ func NewWebSocketHandler(repo repository.Repository, logger interface{}) *WebSoc
 	// Create spatial index with 5 minute TTL for hot data
 	spatial := geo.NewSpatialIndex(5*time.Minute, 1000, 30*time.Second)
 	
+	// Create broadcast manager
+	broadcast := NewBroadcastManager(spatial)
+	
 	return &WebSocketHandler{
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
@@ -72,6 +74,7 @@ func NewWebSocketHandler(repo repository.Repository, logger interface{}) *WebSoc
 		},
 		repository: repo,
 		logger:     logEntry,
+		broadcast:  broadcast,
 		spatial:    spatial,
 	}
 }
@@ -131,8 +134,8 @@ func (h *WebSocketHandler) HandleWebSocket(c *gin.Context) {
 		authenticated: authenticated,
 	}
 
-	// TODO: Регистрируем клиента в broadcast manager
-	// h.broadcast.Register(client, lat, lon, float64(radius))
+	// Регистрируем клиента в broadcast manager
+	h.broadcast.Register(client, lat, lon, float64(radius))
 
 	h.logger.WithFields(logrus.Fields{
 		"client_ip": c.ClientIP(),
@@ -346,8 +349,9 @@ func (c *Client) updateSubscription(lat, lon float64, radius int32) {
 
 // unregisterClient удаляет клиента из списка активных
 func (h *WebSocketHandler) unregisterClient(client *Client) {
+	// Удаляем клиента из broadcast manager
+	h.broadcast.Unregister(client)
 	h.logger.Debug("WebSocket client disconnected")
-	// TODO: Реализовать управление клиентами
 }
 
 // getNextSequence возвращает следующий номер последовательности
@@ -360,13 +364,61 @@ func (h *WebSocketHandler) getNextSequence() uint64 {
 
 // BroadcastUpdate отправляет обновление всем подключенным клиентам
 func (h *WebSocketHandler) BroadcastUpdate(updateType pb.UpdateType, action pb.Action, data interface{}) {
-	// Простая реализация без сложной фильтрации
+	// Создаем пакет обновления
+	packet := &UpdatePacket{
+		Type:      updateType,
+		Timestamp: time.Now(),
+	}
+	
+	// Заполняем данные в зависимости от типа
+	switch v := data.(type) {
+	case *pb.Pilot:
+		if v.Position != nil {
+			packet.Pilot = &models.Pilot{
+				Address:    v.Name, // Временно используем Name как Address
+				Name:       v.Name,
+				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
+				Altitude:   v.Altitude,
+				Speed:      v.Speed,
+				Heading:    v.Course,
+				LastUpdate: time.Unix(v.LastUpdate, 0),
+			}
+		}
+		
+	case *pb.Thermal:
+		if v.Position != nil {
+			packet.Thermal = &models.Thermal{
+				ID:         fmt.Sprintf("%d", v.Id),
+				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
+				Altitude:   v.Altitude,
+				ClimbRate:  v.Climb,
+				Quality:    int32(v.Quality),
+				Timestamp:  time.Unix(v.Timestamp, 0),
+			}
+		}
+		
+	case *pb.Station:
+		if v.Position != nil {
+			packet.Station = &models.Station{
+				ID:         fmt.Sprintf("%d", v.Addr),
+				Name:       v.Name,
+				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
+				LastUpdate: time.Unix(v.LastUpdate, 0),
+			}
+		}
+		
+	default:
+		h.logger.WithField("type", fmt.Sprintf("%T", data)).Warn("Unknown update data type")
+		return
+	}
+	
+	// Отправляем через broadcast manager
+	h.broadcast.Broadcast(packet)
+	
 	h.logger.WithFields(logrus.Fields{
 		"type":   updateType.String(),
 		"action": action.String(),
-	}).Debug("WebSocket update broadcast (simplified)")
-	
-	// TODO: Реализовать полноценный broadcast через BroadcastManager
+	}).Debug("Update sent to broadcast manager")
 }
 
 // shouldSendUpdate проверяет, нужно ли отправлять обновление клиенту
@@ -420,8 +472,17 @@ func (h *WebSocketHandler) GetStats() map[string]interface{} {
 	currentSequence := h.sequence
 	h.sequenceMu.Unlock()
 
+	// Получаем метрики из broadcast manager
+	broadcastMetrics := h.broadcast.GetMetrics()
+	
 	return map[string]interface{}{
-		"current_sequence": currentSequence,
-		"spatial_objects":  0, // TODO: восстановить когда будет spatial index
+		"connected_clients":     broadcastMetrics.ClientsActive,
+		"geohash_groups":       broadcastMetrics.GroupsActive,
+		"current_sequence":     currentSequence,
+		"total_updates":        broadcastMetrics.UpdatesReceived,
+		"updates_broadcast":    broadcastMetrics.UpdatesBroadcast,
+		"avg_broadcast_ms":     broadcastMetrics.AvgBroadcastTimeMs,
+		"avg_recipients":       broadcastMetrics.AvgRecipientsCount,
+		"spatial_objects":      h.spatial.Size(),
 	}
 }

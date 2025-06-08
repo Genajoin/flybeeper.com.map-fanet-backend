@@ -9,7 +9,6 @@ import (
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
 	"github.com/flybeeper/fanet-backend/pkg/pool"
-	"github.com/flybeeper/fanet-backend/pkg/utils"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
@@ -312,38 +311,46 @@ func (bm *BroadcastManager) broadcastToGroup(group *GeohashGroup, updates []*Upd
 	
 	// Build update batch message using pool
 	updateBatch := pool.Global.GetPbUpdateBatch()
-	updateBatch.Sequence = uint64(time.Now().UnixNano())
+	updateBatch.Timestamp = time.Now().Unix()
 	
 	// Deduplicate updates by object ID
 	seen := make(map[string]bool)
 	
 	for _, update := range updates {
 		var objID string
+		var data []byte
+		var err error
+		
 		pbUpdate := pool.Global.GetPbUpdate()
 		pbUpdate.Type = update.Type
-		pbUpdate.Timestamp = update.Timestamp.Unix()
+		pbUpdate.Action = pb.Action_ACTION_UPDATE
+		pbUpdate.Sequence = uint64(time.Now().UnixNano())
 		
 		switch update.Type {
 		case pb.UpdateType_UPDATE_TYPE_PILOT:
 			if update.Pilot != nil {
 				objID = update.Pilot.Address
-				pbUpdate.Pilot = update.Pilot.ToProto()
+				pbPilot := update.Pilot.ToProto()
+				data, err = proto.Marshal(pbPilot)
 			}
 		case pb.UpdateType_UPDATE_TYPE_THERMAL:
 			if update.Thermal != nil {
 				objID = update.Thermal.ID
-				pbUpdate.Thermal = update.Thermal.ToProto()
+				pbThermal := update.Thermal.ToProto()
+				data, err = proto.Marshal(pbThermal)
 			}
 		case pb.UpdateType_UPDATE_TYPE_STATION:
 			if update.Station != nil {
 				objID = update.Station.ChipID
-				pbUpdate.Station = update.Station.ToProto()
+				pbStation := update.Station.ToProto()
+				data, err = proto.Marshal(pbStation)
 			}
 		}
 		
-		// Skip duplicates
-		if objID != "" && !seen[objID] {
+		// Skip duplicates and marshal errors
+		if objID != "" && !seen[objID] && err == nil {
 			seen[objID] = true
+			pbUpdate.Data = data
 			updateBatch.Updates = append(updateBatch.Updates, pbUpdate)
 		}
 	}

@@ -87,7 +87,7 @@ func (t *Thermal) Validate() error {
 
 	// Проверка скороподъемности (реалистичные значения)
 	if t.ClimbRate < -500 || t.ClimbRate > 2000 {
-		return fmt.Errorf("invalid climb rate: %d", t.ClimbRate)
+		return fmt.Errorf("invalid climb rate: %f", t.ClimbRate)
 	}
 
 	// Проверка скорости ветра
