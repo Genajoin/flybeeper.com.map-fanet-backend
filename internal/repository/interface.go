@@ -16,6 +16,7 @@ type Repository interface {
 	// Операции с пилотами
 	SavePilot(ctx context.Context, pilot *models.Pilot) error
 	GetPilotsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Pilot, error)
+	UpdatePilotName(ctx context.Context, deviceID string, name string) error
 	DeletePilot(ctx context.Context, deviceID string) error
 
 	// Операции с термиками
@@ -52,6 +53,17 @@ type HistoryRepository interface {
 	GetStats(ctx context.Context) (map[string]interface{}, error)
 }
 
+// MySQLRepositoryInterface интерфейс для MySQL репозитория с batch операциями
+type MySQLRepositoryInterface interface {
+	HistoryRepository
+
+	// Batch операции для высокой производительности
+	SavePilotsBatch(ctx context.Context, pilots []*models.Pilot) error
+	SaveThermalsBatch(ctx context.Context, thermals []*models.Thermal) error
+	SaveStationsBatch(ctx context.Context, stations []*models.Station) error
+}
+
 // Ensure implementations
 var _ Repository = (*RedisRepository)(nil)
 var _ HistoryRepository = (*MySQLRepository)(nil)
+var _ MySQLRepositoryInterface = (*MySQLRepository)(nil)

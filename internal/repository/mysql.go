@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -455,4 +456,217 @@ func (r *MySQLRepository) CleanupOldTracks(ctx context.Context, olderThan time.D
 	}
 
 	return nil
+}
+
+// SavePilotsBatch сохраняет батч пилотов в MySQL (высокопроизводительная операция)
+func (r *MySQLRepository) SavePilotsBatch(ctx context.Context, pilots []*models.Pilot) error {
+	if len(pilots) == 0 {
+		return nil
+	}
+
+	// Начинаем транзакцию
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin batch transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Подготавливаем batch INSERT для ufo_track
+	trackQuery := `
+		INSERT INTO ufo_track (
+			addr, ufo_type, latitude, longitude, altitude_gps,
+			speed, climb, course, track_online, datestamp
+		) VALUES ` + r.generatePlaceholders(len(pilots), 10)
+
+	trackArgs := make([]interface{}, 0, len(pilots)*10)
+
+	for _, pilot := range pilots {
+		// Конвертируем hex device ID в int
+		addr, err := strconv.ParseInt(pilot.DeviceID, 16, 32)
+		if err != nil {
+			r.logger.WithField("device_id", pilot.DeviceID).WithField("error", err).Warn("Invalid device ID format, skipping")
+			continue
+		}
+
+		trackArgs = append(trackArgs,
+			addr, pilot.AircraftType, pilot.Position.Latitude, pilot.Position.Longitude,
+			pilot.Position.Altitude, pilot.Speed, pilot.ClimbRate, pilot.Heading,
+			pilot.TrackOnline, pilot.LastUpdate)
+	}
+
+	// Выполняем batch INSERT для треков
+	result, err := tx.ExecContext(ctx, trackQuery, trackArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to batch insert tracks: %w", err)
+	}
+
+	// Получаем ID первой вставленной записи
+	firstTrackID, err := result.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("failed to get first track ID: %w", err)
+	}
+
+	// Подготавливаем batch INSERT для ufo (обновление last_position)
+	ufoQuery := `
+		INSERT INTO ufo (addr, last_position) VALUES ` + r.generatePlaceholders(len(pilots), 2) + `
+		ON DUPLICATE KEY UPDATE last_position = VALUES(last_position)`
+
+	ufoArgs := make([]interface{}, 0, len(pilots)*2)
+	currentTrackID := firstTrackID
+
+	for _, pilot := range pilots {
+		addr, err := strconv.ParseInt(pilot.DeviceID, 16, 32)
+		if err != nil {
+			continue
+		}
+
+		ufoArgs = append(ufoArgs, addr, currentTrackID)
+		currentTrackID++
+	}
+
+	// Выполняем batch UPDATE для ufo
+	_, err = tx.ExecContext(ctx, ufoQuery, ufoArgs...)
+	if err != nil {
+		return fmt.Errorf("failed to batch update ufo records: %w", err)
+	}
+
+	// Подготавливаем batch INSERT для имен (только если есть имена)
+	pilotsWithNames := make([]*models.Pilot, 0)
+	for _, pilot := range pilots {
+		if pilot.Name != "" {
+			pilotsWithNames = append(pilotsWithNames, pilot)
+		}
+	}
+
+	if len(pilotsWithNames) > 0 {
+		nameQuery := `
+			INSERT INTO name (addr, name) VALUES ` + r.generatePlaceholders(len(pilotsWithNames), 2) + `
+			ON DUPLICATE KEY UPDATE name = VALUES(name)`
+
+		nameArgs := make([]interface{}, 0, len(pilotsWithNames)*2)
+		for _, pilot := range pilotsWithNames {
+			addr, err := strconv.ParseInt(pilot.DeviceID, 16, 32)
+			if err != nil {
+				continue
+			}
+			nameArgs = append(nameArgs, addr, pilot.Name)
+		}
+
+		_, err = tx.ExecContext(ctx, nameQuery, nameArgs...)
+		if err != nil {
+			r.logger.WithField("error", err).Warn("Failed to batch save pilot names")
+		}
+	}
+
+	// Коммитим транзакцию
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit batch transaction: %w", err)
+	}
+
+	r.logger.WithField("count", len(pilots)).WithField("with_names", len(pilotsWithNames)).Debug("Saved pilots batch to MySQL")
+	return nil
+}
+
+// SaveThermalsBatch сохраняет батч термиков в MySQL
+func (r *MySQLRepository) SaveThermalsBatch(ctx context.Context, thermals []*models.Thermal) error {
+	if len(thermals) == 0 {
+		return nil
+	}
+
+	query := `
+		INSERT INTO thermal (
+			addr, latitude, longitude, altitude, quality, climb,
+			wind_speed, wind_heading
+		) VALUES ` + r.generatePlaceholders(len(thermals), 8)
+
+	args := make([]interface{}, 0, len(thermals)*8)
+	for _, thermal := range thermals {
+		// Конвертируем hex reported_by в int
+		addr, err := strconv.ParseInt(thermal.ReportedBy, 16, 32)
+		if err != nil {
+			r.logger.WithField("reported_by", thermal.ReportedBy).WithField("error", err).Warn("Invalid thermal reported_by format, skipping")
+			continue
+		}
+
+		args = append(args,
+			addr, thermal.Center.Latitude, thermal.Center.Longitude,
+			thermal.Altitude, thermal.Quality, thermal.ClimbRate,
+			thermal.WindSpeed, thermal.WindDirection)
+	}
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to batch insert thermals: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	r.logger.WithField("count", affected).Debug("Saved thermals batch to MySQL")
+	return nil
+}
+
+// SaveStationsBatch сохраняет батч станций в MySQL
+func (r *MySQLRepository) SaveStationsBatch(ctx context.Context, stations []*models.Station) error {
+	if len(stations) == 0 {
+		return nil
+	}
+
+	query := `
+		INSERT INTO station (
+			addr, name, latitude, longitude, temperature, wind_heading,
+			wind_speed, wind_gusts, humidity, pressure, battery, datestamp
+		) VALUES ` + r.generatePlaceholders(len(stations), 12) + `
+		ON DUPLICATE KEY UPDATE
+			name = VALUES(name),
+			latitude = VALUES(latitude),
+			longitude = VALUES(longitude),
+			temperature = VALUES(temperature),
+			wind_heading = VALUES(wind_heading),
+			wind_speed = VALUES(wind_speed),
+			wind_gusts = VALUES(wind_gusts),
+			humidity = VALUES(humidity),
+			pressure = VALUES(pressure),
+			battery = VALUES(battery),
+			datestamp = VALUES(datestamp)`
+
+	args := make([]interface{}, 0, len(stations)*12)
+	for _, station := range stations {
+		// Конвертируем hex station ID в int
+		addr, err := strconv.ParseInt(station.ID, 16, 32)
+		if err != nil {
+			r.logger.WithField("station_id", station.ID).WithField("error", err).Warn("Invalid station ID format, skipping")
+			continue
+		}
+
+		args = append(args,
+			addr, station.Name, station.Position.Latitude, station.Position.Longitude,
+			station.Temperature, station.WindDirection, station.WindSpeed, station.WindGusts,
+			station.Humidity, station.Pressure, station.Battery, station.LastUpdate)
+	}
+
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to batch insert stations: %w", err)
+	}
+
+	affected, _ := result.RowsAffected()
+	r.logger.WithField("count", affected).Debug("Saved stations batch to MySQL")
+	return nil
+}
+
+// generatePlaceholders генерирует плейсхолдеры для batch INSERT
+func (r *MySQLRepository) generatePlaceholders(count, fieldsPerRecord int) string {
+	if count == 0 {
+		return ""
+	}
+
+	// Генерируем один набор плейсхолдеров (?,?,?...)
+	singleRecord := "(" + strings.Repeat("?,", fieldsPerRecord-1) + "?)"
+	
+	// Повторяем для всех записей
+	placeholders := make([]string, count)
+	for i := 0; i < count; i++ {
+		placeholders[i] = singleRecord
+	}
+	
+	return strings.Join(placeholders, ",")
 }

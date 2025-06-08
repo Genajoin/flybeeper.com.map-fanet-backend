@@ -13,6 +13,7 @@ import (
 	"github.com/flybeeper/fanet-backend/internal/handler"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/mqtt"
+	"github.com/flybeeper/fanet-backend/internal/service"
 	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
@@ -53,6 +54,7 @@ func main() {
 
 	// Инициализируем MySQL репозиторий (опционально)
 	var mysqlRepo *repository.MySQLRepository
+	var batchWriter *service.BatchWriter
 	if cfg.MySQL.DSN != "" {
 		mysqlRepo, err = repository.NewMySQLRepository(&cfg.MySQL, logger)
 		if err != nil {
@@ -63,6 +65,14 @@ func main() {
 				logger.WithField("error", err).Warn("Failed to connect to MySQL")
 			} else {
 				logger.Info("Connected to MySQL")
+				
+				// Инициализируем batch writer для высокопроизводительной записи
+				batchWriter = service.NewBatchWriter(mysqlRepo, logger, nil)
+				defer batchWriter.Stop()
+				
+				logger.WithField("batch_size", 1000).
+					WithField("flush_interval", "5s").
+					Info("Started MySQL batch writer")
 			}
 		}
 	}
@@ -73,19 +83,49 @@ func main() {
 	// Получаем WebSocket handler для интеграции с MQTT
 	wsHandler := server.GetWebSocketHandler()
 
-	// Определяем messageHandler с поддержкой WebSocket трансляции
+	// Определяем messageHandler с поддержкой WebSocket трансляции и асинхронного MySQL
 	messageHandler := func(msg *mqtt.FANETMessage) error {
-		// Конвертируем FANET сообщение в модели и сохраняем в Redis
+		// Конвертируем FANET сообщение в модели и сохраняем в Redis + MySQL
 		switch msg.Type {
 		case 1: // Air tracking
 			if pilot := convertFANETToPilot(msg); pilot != nil {
-				// Сохраняем в Redis
+				// Сохраняем в Redis (синхронно - критично для производительности)
 				if err := redisRepo.SavePilot(ctx, pilot); err != nil {
 					return err
 				}
+				
+				// Асинхронно добавляем в MySQL batch queue (неблокирующая операция)
+				if batchWriter != nil {
+					if err := batchWriter.QueuePilot(pilot); err != nil {
+						logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
+							Warn("Failed to queue pilot for MySQL batch")
+					}
+				}
+				
 				// Транслируем через WebSocket
 				pbPilot := convertPilotToProtobuf(pilot)
 				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_PILOT, pb.Action_ACTION_UPDATE, pbPilot)
+			}
+		case 2: // Name update
+			if nameUpdate := convertFANETToNameUpdate(msg); nameUpdate != nil {
+				// Обновляем имя пилота в Redis
+				if err := redisRepo.UpdatePilotName(ctx, nameUpdate.DeviceID, nameUpdate.Name); err != nil {
+					logger.WithField("error", err).WithField("device_id", nameUpdate.DeviceID).
+						Warn("Failed to update pilot name in Redis")
+				}
+				
+				// Асинхронно обновляем в MySQL через batch
+				if batchWriter != nil {
+					pilot := &models.Pilot{
+						DeviceID: nameUpdate.DeviceID,
+						Name:     nameUpdate.Name,
+						LastUpdate: time.Now(),
+					}
+					if err := batchWriter.QueuePilot(pilot); err != nil {
+						logger.WithField("error", err).WithField("device_id", nameUpdate.DeviceID).
+							Warn("Failed to queue name update for MySQL batch")
+					}
+				}
 			}
 		case 9: // Thermal
 			if thermal := convertFANETToThermal(msg); thermal != nil {
@@ -93,6 +133,15 @@ func main() {
 				if err := redisRepo.SaveThermal(ctx, thermal); err != nil {
 					return err
 				}
+				
+				// Асинхронно добавляем в MySQL batch queue
+				if batchWriter != nil {
+					if err := batchWriter.QueueThermal(thermal); err != nil {
+						logger.WithField("error", err).WithField("thermal_id", thermal.ID).
+							Warn("Failed to queue thermal for MySQL batch")
+					}
+				}
+				
 				// Транслируем через WebSocket
 				pbThermal := convertThermalToProtobuf(thermal)
 				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_THERMAL, pb.Action_ACTION_ADD, pbThermal)
@@ -103,6 +152,15 @@ func main() {
 				if err := redisRepo.SaveStation(ctx, station); err != nil {
 					return err
 				}
+				
+				// Асинхронно добавляем в MySQL batch queue
+				if batchWriter != nil {
+					if err := batchWriter.QueueStation(station); err != nil {
+						logger.WithField("error", err).WithField("station_id", station.ID).
+							Warn("Failed to queue station for MySQL batch")
+					}
+				}
+				
 				// Транслируем через WebSocket
 				pbStation := convertStationToProtobuf(station)
 				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_STATION, pb.Action_ACTION_UPDATE, pbStation)
@@ -284,6 +342,25 @@ func convertFANETToStation(msg *mqtt.FANETMessage) *models.Station {
 		Pressure:      weatherData.Pressure,
 		Battery:       100, // Нет в FANET Weather
 		LastUpdate:    msg.Timestamp,
+	}
+}
+
+// NameUpdate структура для обновления имени пилота
+type NameUpdate struct {
+	DeviceID string
+	Name     string
+}
+
+func convertFANETToNameUpdate(msg *mqtt.FANETMessage) *NameUpdate {
+	// Получаем данные для Name (Type 2)
+	nameData, ok := msg.Data.(*mqtt.NameData)
+	if !ok {
+		return nil
+	}
+
+	return &NameUpdate{
+		DeviceID: msg.DeviceID,
+		Name:     nameData.Name,
 	}
 }
 

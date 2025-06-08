@@ -175,6 +175,44 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	return nil
 }
 
+// UpdatePilotName обновляет имя пилота в Redis
+func (r *RedisRepository) UpdatePilotName(ctx context.Context, deviceID string, name string) error {
+	if deviceID == "" {
+		return fmt.Errorf("device ID cannot be empty")
+	}
+
+	pilotKey := PilotPrefix + deviceID
+	
+	// Проверяем существование пилота
+	exists := r.client.Exists(ctx, pilotKey)
+	if exists.Val() == 0 {
+		// Пилот не существует, создаем минимальную запись
+		pipe := r.client.Pipeline()
+		pipe.HSet(ctx, pilotKey, map[string]interface{}{
+			"name":        name,
+			"last_update": time.Now().Unix(),
+		})
+		pipe.Expire(ctx, pilotKey, PilotTTL)
+		
+		_, err := pipe.Exec(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to create pilot name record: %w", err)
+		}
+		
+		r.logger.WithField("device_id", deviceID).WithField("name", name).Debug("Created new pilot name record in Redis")
+		return nil
+	}
+
+	// Обновляем существующего пилота
+	result := r.client.HSet(ctx, pilotKey, "name", name)
+	if result.Err() != nil {
+		return fmt.Errorf("failed to update pilot name: %w", result.Err())
+	}
+
+	r.logger.WithField("device_id", deviceID).WithField("name", name).Debug("Updated pilot name in Redis")
+	return nil
+}
+
 // GetPilotsInRadius возвращает пилотов в указанном радиусе
 func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Pilot, error) {
 	// Поиск по геопространственному индексу
