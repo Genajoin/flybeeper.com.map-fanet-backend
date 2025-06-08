@@ -66,3 +66,4 @@ pkg/pb/*.pb.go
 # Local configuration overrides
 .env.local
 .env.*.local
+scripts/mqtt-test-publisher

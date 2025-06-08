@@ -8,7 +8,7 @@ WebSocket используется для real-time доставки диффе�
 
 ```
 wss://api.flybeeper.com/ws/v1/updates
-ws://localhost:8080/ws/v1/updates (dev)
+ws://localhost:8090/ws/v1/updates (dev)
 ```
 
 ## Параметры подключения

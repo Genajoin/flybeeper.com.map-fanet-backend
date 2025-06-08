@@ -10,7 +10,7 @@ info:
 servers:
   - url: https://api.flybeeper.com/fanet/v1
     description: Production server
-  - url: http://localhost:8080/api/v1
+  - url: http://localhost:8090/api/v1
     description: Local development
 
 paths:
