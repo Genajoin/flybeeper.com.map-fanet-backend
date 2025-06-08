@@ -53,9 +53,9 @@ COPY --from=builder /app/fanet-api .
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8090/health || exit 1
 
-EXPOSE 8080
+EXPOSE 8090
 
 CMD ["./fanet-api"]
 ```
@@ -69,7 +69,7 @@ services:
   fanet-api:
     build: .
     ports:
-      - "8080:8080"
+      - "8090:8090"
     environment:
       - REDIS_URL=redis://redis:6379
       - MQTT_URL=tcp://mqtt:1883
@@ -136,7 +136,7 @@ spec:
       - name: fanet-api
         image: flybeeper/fanet-api:latest
         ports:
-        - containerPort: 8080
+        - containerPort: 8090
           name: http
         - containerPort: 9090
           name: metrics
@@ -163,13 +163,13 @@ spec:
         livenessProbe:
           httpGet:
             path: /health
-            port: 8080
+            port: 8090
           initialDelaySeconds: 10
           periodSeconds: 30
         readinessProbe:
           httpGet:
             path: /ready
-            port: 8080
+            port: 8090
           initialDelaySeconds: 5
           periodSeconds: 10
 ```
@@ -188,7 +188,7 @@ spec:
   ports:
   - name: http
     port: 80
-    targetPort: 8080
+    targetPort: 8090
   - name: metrics
     port: 9090
     targetPort: 9090
@@ -284,7 +284,7 @@ metadata:
 data:
   config.yaml: |
     server:
-      port: 8080
+      port: 8090
       read_timeout: 10s
       write_timeout: 10s
       max_header_bytes: 1048576

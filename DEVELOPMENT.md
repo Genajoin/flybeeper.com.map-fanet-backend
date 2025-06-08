@@ -14,7 +14,7 @@
 
 ```bash
 # 1. Клонирование репозитория
-git clone <repository-url>
+git clone https://github.com/Genajoin/flybeeper.com.map-fanet-backend.git
 cd flybeeper.com.map-fanet-backend
 
 # 2. Установка зависимостей и генерация Protobuf
@@ -118,10 +118,10 @@ ws.onmessage = (event) => {
 
 ```bash
 # Подключение к MQTT брокеру
-mosquitto_sub -h localhost -p 1883 -t "fb/b/+/f" -v
+mosquitto_sub -h localhost -p 1883 -t "fb/b/+/f/#" -v
 
 # Отправка тестового FANET сообщения
-mosquitto_pub -h localhost -p 1883 -t "fb/b/test-station/f" \
+mosquitto_pub -h localhost -p 1883 -t "fb/b/12345678/f/1" \
   -m "$(echo -en '\x12\x34\x56\x78\x01\x23\x45\x01\x02\x03\x04\x05\x06\x07\x08')"
 ```
 
