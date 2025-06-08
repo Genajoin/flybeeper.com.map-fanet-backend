@@ -111,6 +111,11 @@ func (r *RedisRepository) Close() error {
 	return r.client.Close()
 }
 
+// GetClient возвращает Redis клиент для внешнего использования (например, для auth кеширования)
+func (r *RedisRepository) GetClient() *redis.Client {
+	return r.client
+}
+
 // SavePilot сохраняет данные пилота согласно Redis схеме
 func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) error {
 	if pilot == nil {

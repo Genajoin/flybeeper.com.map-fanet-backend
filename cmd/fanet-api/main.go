@@ -77,8 +77,8 @@ func main() {
 		}
 	}
 
-	// Создаем HTTP сервер
-	server := handler.NewServer(cfg, redisRepo, logger)
+	// Создаем HTTP сервер с Redis клиентом для auth кеширования
+	server := handler.NewServer(cfg, redisRepo, redisRepo.GetClient(), logger)
 
 	// Получаем WebSocket handler для интеграции с MQTT
 	wsHandler := server.GetWebSocketHandler()

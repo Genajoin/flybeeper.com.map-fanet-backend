@@ -7,9 +7,12 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/flybeeper/fanet-backend/internal/auth"
 	"github.com/flybeeper/fanet-backend/internal/config"
 	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
+	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
 )
 
@@ -17,14 +20,15 @@ import (
 type Server struct {
 	router     *gin.Engine
 	httpServer *http.Server
-	logger     *utils.Logger
-	config     *config.Config
+	logger      *utils.Logger
+	config      *config.Config
 	restHandler *RESTHandler
-	wsHandler  *WebSocketHandler
+	wsHandler   *WebSocketHandler
+	authMW      *auth.Middleware
 }
 
 // NewServer создает новый HTTP сервер
-func NewServer(cfg *config.Config, repo repository.Repository, logger *utils.Logger) *Server {
+func NewServer(cfg *config.Config, repo repository.Repository, redisClient *redis.Client, logger *utils.Logger) *Server {
 	// Production mode для Gin
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -46,12 +50,21 @@ func NewServer(cfg *config.Config, repo repository.Repository, logger *utils.Log
 	// WebSocket handler
 	wsHandler := NewWebSocketHandler(repo, logger)
 
+	// Auth middleware - создаем logrus.Logger для совместимости
+	logrusLogger := logrus.New()
+	logrusLogger.SetLevel(logrus.InfoLevel)
+	
+	authCache := auth.NewCache(redisClient, cfg.Auth.CacheTTL)
+	authValidator := auth.NewValidator(cfg.Auth.Endpoint, authCache, logrusLogger)
+	authMW := auth.NewMiddleware(authValidator, logrusLogger)
+
 	server := &Server{
 		router:      router,
 		logger:      logger,
 		config:      cfg,
 		restHandler: restHandler,
 		wsHandler:   wsHandler,
+		authMW:      authMW,
 	}
 
 	// Настройка HTTP сервера с HTTP/2
@@ -91,7 +104,7 @@ func (s *Server) setupRoutes() {
 
 		// Protected endpoint (требует Bearer token)
 		protected := v1.Group("/")
-		protected.Use(AuthMiddleware(s.logger))
+		protected.Use(s.authMW.Authenticate())
 		{
 			protected.POST("/position", s.restHandler.PostPosition)
 		}
@@ -223,49 +236,4 @@ func SecurityHeadersMiddleware() gin.HandlerFunc {
 	}
 }
 
-// AuthMiddleware проверка Bearer token
-func AuthMiddleware(logger *utils.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    "missing_authorization",
-				"message": "Authorization header is required",
-			})
-			c.Abort()
-			return
-		}
-
-		// Проверяем формат Bearer token
-		if len(authHeader) < 7 || authHeader[:7] != "Bearer " {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    "invalid_token_format",
-				"message": "Invalid authorization format",
-			})
-			c.Abort()
-			return
-		}
-
-		token := authHeader[7:]
-		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"code":    "missing_token",
-				"message": "Bearer token is required",
-			})
-			c.Abort()
-			return
-		}
-
-		// TODO: Валидация токена через Laravel API
-		// Это будет реализовано в auth пакете
-		
-		// Пока что принимаем любой не пустой токен
-		logger.WithField("token_length", len(token)).Debug("Token validation (stub)")
-
-		// Сохраняем информацию о пользователе в контексте
-		c.Set("user_token", token)
-		c.Set("user_authenticated", true)
-
-		c.Next()
-	}
-}
+// Старый AuthMiddleware удален - теперь используется auth.Middleware

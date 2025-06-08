@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/flybeeper/fanet-backend/internal/auth"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
@@ -398,10 +399,20 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 // PostPosition принимает позицию от пилота (требует аутентификации)
 // POST /api/v1/position
 func (h *RESTHandler) PostPosition(c *gin.Context) {
-	// TODO: Проверка Bearer token (будет реализовано в middleware)
-
-	_, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
+
+	// Получаем пользователя из контекста (установлен middleware)
+	user, exists := auth.GetUser(c)
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"code":    "auth_required",
+			"message": "Authentication required",
+		})
+		return
+	}
+
+	userID, _ := auth.GetUserID(c)
 
 	var request pb.PositionRequest
 
@@ -460,8 +471,35 @@ func (h *RESTHandler) PostPosition(c *gin.Context) {
 		return
 	}
 
-	// TODO: Сохранение позиции в Redis через репозиторий
-	// Это требует информации о пилоте из токена аутентификации
+	// Создаем pilot модель с данными пользователя
+	pilot := &models.Pilot{
+		DeviceID:     fmt.Sprintf("user_%d", userID), // Используем user ID как FANET адрес
+		Name:         user.Name,
+		AircraftType: uint8(models.PilotTypeParaglider), // По умолчанию
+		Position: models.GeoPoint{
+			Latitude:  request.Position.Latitude,
+			Longitude: request.Position.Longitude,
+			Altitude:  int16(request.Altitude),
+		},
+		Speed:      uint16(request.Speed),
+		ClimbRate:  int16(request.Climb * 10), // Конвертируем м/с в дециметры/с
+		Heading:    uint16(request.Course),
+		LastUpdate: time.Unix(request.Timestamp, 0),
+	}
+
+	// Сохраняем позицию через репозиторий
+	if err := h.repo.SavePilot(ctx, pilot); err != nil {
+		h.logger.WithFields(map[string]interface{}{
+			"user_id": userID,
+			"error":   err,
+		}).Error("Failed to save pilot position")
+		
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    "save_error",
+			"message": "Failed to save position",
+		})
+		return
+	}
 
 	response := &pb.PositionResponse{
 		Success: true,
@@ -485,10 +523,12 @@ func (h *RESTHandler) PostPosition(c *gin.Context) {
 	}
 
 	h.logger.WithFields(map[string]interface{}{
-		"lat": request.Position.Latitude,
-		"lon": request.Position.Longitude,
-		"alt": request.Altitude,
-	}).Info("Position update received")
+		"user_id": userID,
+		"user":    user.Email,
+		"lat":     request.Position.Latitude,
+		"lon":     request.Position.Longitude,
+		"alt":     request.Altitude,
+	}).Info("Position update received and saved")
 }
 
 // Вспомогательные функции

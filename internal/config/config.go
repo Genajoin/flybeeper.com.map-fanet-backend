@@ -124,7 +124,7 @@ func Load() (*Config, error) {
 			MaxOpenConns: getInt("MYSQL_MAX_OPEN_CONNS", 100),
 		},
 		Auth: AuthConfig{
-			Endpoint: getEnv("AUTH_ENDPOINT", "https://api.flybeeper.com/api/v3/auth/verify"),
+			Endpoint: getEnv("AUTH_ENDPOINT", "https://api.flybeeper.com/api/v4/user"),
 			CacheTTL: getDuration("AUTH_CACHE_TTL", 5*time.Minute),
 		},
 		Geo: GeoConfig{
