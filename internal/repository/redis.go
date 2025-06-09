@@ -540,7 +540,7 @@ func (r *RedisRepository) GetStats(ctx context.Context) (map[string]interface{},
 func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, location *redis.GeoLocation) (*models.Pilot, error) {
 	pilot := &models.Pilot{
 		DeviceID: deviceID,
-		Position: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  location.Latitude,
 			Longitude: location.Longitude,
 		},
@@ -565,7 +565,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 
 	if speedStr, ok := data["speed"]; ok {
 		if speed, err := strconv.ParseFloat(speedStr, 64); err == nil {
-			pilot.Speed = uint16(speed)
+			pilot.Speed = float32(speed)
 		}
 	}
 
@@ -577,7 +577,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 
 	if courseStr, ok := data["course"]; ok {
 		if course, err := strconv.ParseFloat(courseStr, 64); err == nil {
-			pilot.Heading = uint16(course)
+			pilot.Heading = float32(course)
 		}
 	}
 
@@ -624,13 +624,13 @@ func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string,
 
 	if qualityStr, ok := data["quality"]; ok {
 		if quality, err := strconv.Atoi(qualityStr); err == nil {
-			thermal.Quality = uint8(quality)
+			thermal.Quality = int32(quality)
 		}
 	}
 
 	if climbStr, ok := data["climb"]; ok {
 		if climb, err := strconv.ParseFloat(climbStr, 64); err == nil {
-			thermal.ClimbRate = int16(climb * 10) // м/с -> м/с * 10
+			thermal.ClimbRate = float32(climb) // уже в правильных единицах
 		}
 	}
 
@@ -659,7 +659,7 @@ func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string,
 func (r *RedisRepository) mapToStation(stationID string, data map[string]string, location *redis.GeoLocation) (*models.Station, error) {
 	station := &models.Station{
 		ID: stationID,
-		Position: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  location.Latitude,
 			Longitude: location.Longitude,
 		},

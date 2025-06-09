@@ -2,14 +2,12 @@ package repository
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
 
-	"flybeeper.com/fanet-api/internal/geo"
-	"flybeeper.com/fanet-api/internal/models"
-	"flybeeper.com/fanet-api/pkg/utils"
+	"github.com/flybeeper/fanet-backend/internal/geo"
+	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 )
@@ -43,7 +41,7 @@ type RepositoryMetrics struct {
 
 // NewOptimizedRedisRepository создает новый оптимизированный репозиторий
 func NewOptimizedRedisRepository(client *redis.Client, defaultRadius float64) *OptimizedRedisRepository {
-	logger := utils.Logger.WithField("component", "redis_optimized")
+	logger := logrus.NewEntry(logrus.New()).WithField("component", "redis_optimized")
 	
 	// Настройка пула соединений для оптимальной производительности
 	opt := client.Options()
@@ -614,10 +612,10 @@ func (r *OptimizedRedisRepository) GetStationsInBounds(ctx context.Context, boun
 	
 	// Проверяем пространственный индекс
 	spatialBounds := geo.Bounds{
-		MinLat: bounds.MinLat,
-		MinLon: bounds.MinLon,
-		MaxLat: bounds.MaxLat,
-		MaxLon: bounds.MaxLon,
+		MinLat: bounds.MinLat(),
+		MinLon: bounds.MinLon(),
+		MaxLat: bounds.MaxLat(),
+		MaxLon: bounds.MaxLon(),
 	}
 	
 	spatialResults := r.spatial.QueryBounds(spatialBounds)

@@ -3,7 +3,7 @@ package benchmarks
 import (
 	"testing"
 
-	"flybeeper.com/fanet-api/internal/mqtt"
+	"github.com/flybeeper/fanet-backend/internal/mqtt"
 )
 
 // Sample FANET packets for benchmarking

@@ -10,11 +10,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"flybeeper.com/fanet-api/internal/geo"
-	"flybeeper.com/fanet-api/internal/models"
-	"flybeeper.com/fanet-api/internal/repository"
-	"flybeeper.com/fanet-api/pkg/pb"
-	"flybeeper.com/fanet-api/pkg/utils"
+	"github.com/flybeeper/fanet-backend/internal/geo"
+	"github.com/flybeeper/fanet-backend/internal/models"
+	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
@@ -28,6 +27,8 @@ type WebSocketHandler struct {
 	spatial    *geo.SpatialIndex
 	sequence   uint64
 	sequenceMu sync.Mutex
+	clients    map[*Client]bool
+	clientsMu  sync.RWMutex
 }
 
 // Client представляет WebSocket соединение
@@ -65,6 +66,7 @@ func NewWebSocketHandler(repo repository.Repository, logger *logrus.Entry) *WebS
 		logger:     logger,
 		broadcast:  broadcast,
 		spatial:    spatial,
+		clients:    make(map[*Client]bool),
 	}
 }
 
@@ -355,37 +357,37 @@ func (h *WebSocketHandler) BroadcastUpdate(updateType pb.UpdateType, action pb.A
 	switch v := data.(type) {
 	case *pb.Pilot:
 		packet.Pilot = &models.Pilot{
-			Address:    v.Address,
+			DeviceID:   fmt.Sprintf("%d", v.Addr),
 			Type:       models.PilotType(v.Type),
 			Name:       v.Name,
 			Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
 			Altitude:   int32(v.Altitude),
 			Speed:      v.Speed,
-			Heading:    v.Heading,
-			LastSeen:   time.Unix(v.LastSeen, 0),
+			Heading:    v.Course,
+			LastSeen:   time.Unix(v.LastUpdate, 0),
 		}
 		// Добавляем в пространственный индекс
 		h.spatial.Insert(packet.Pilot)
 		
 	case *pb.Thermal:
 		packet.Thermal = &models.Thermal{
-			ID:         v.Id,
+			ID:         fmt.Sprintf("%d", v.Id),
 			Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
 			Altitude:   int32(v.Altitude),
-			ClimbRate:  v.ClimbRate,
+			ClimbRate:  v.Climb,
 			Quality:    int32(v.Quality),
-			PilotCount: int32(v.PilotCount),
-			LastSeen:   time.Unix(v.LastSeen, 0),
+			PilotCount: 0, // Не определено в протобуфе
+			LastSeen:   time.Unix(v.Timestamp, 0),
 		}
 		// Добавляем в пространственный индекс
 		h.spatial.Insert(packet.Thermal)
 		
 	case *pb.Station:
 		packet.Station = &models.Station{
-			ChipID:      v.ChipId,
+			ID:          fmt.Sprintf("%d", v.Addr),
 			Name:        v.Name,
 			Position:    &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
-			LastSeen:    time.Unix(v.LastSeen, 0),
+			LastSeen:    time.Unix(v.LastUpdate, 0),
 		}
 		// Добавляем в пространственный индекс
 		h.spatial.Insert(packet.Station)
@@ -477,9 +479,3 @@ func (h *WebSocketHandler) GetStats() map[string]interface{} {
 	}
 }
 
-// unregisterClient удаляет клиента из всех подписок
-func (h *WebSocketHandler) unregisterClient(c *Client) {
-	h.broadcast.Unregister(c)
-	close(c.send)
-	h.logger.WithField("client", c.conn.RemoteAddr()).Debug("Client unregistered")
-}

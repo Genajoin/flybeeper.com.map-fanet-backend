@@ -134,6 +134,31 @@ func (b Bounds) GeohashCover(precision int) []string {
 	return result
 }
 
+// DiagonalKm возвращает диагональ границ в километрах
+func (b Bounds) DiagonalKm() float64 {
+	return b.Southwest.DistanceTo(b.Northeast)
+}
+
+// MinLat возвращает минимальную широту
+func (b Bounds) MinLat() float64 {
+	return b.Southwest.Latitude
+}
+
+// MinLon возвращает минимальную долготу
+func (b Bounds) MinLon() float64 {
+	return b.Southwest.Longitude
+}
+
+// MaxLat возвращает максимальную широту
+func (b Bounds) MaxLat() float64 {
+	return b.Northeast.Latitude
+}
+
+// MaxLon возвращает максимальную долготу
+func (b Bounds) MaxLon() float64 {
+	return b.Northeast.Longitude
+}
+
 // geohashStepSize возвращает приблизительный размер шага в градусах для заданной точности
 func geohashStepSize(precision int) float64 {
 	// Приблизительные размеры ячеек geohash

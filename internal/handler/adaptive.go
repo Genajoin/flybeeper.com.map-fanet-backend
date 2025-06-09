@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"flybeeper.com/fanet-api/internal/geo"
-	"flybeeper.com/fanet-api/internal/models"
+	"github.com/flybeeper/fanet-backend/internal/geo"
+	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/sirupsen/logrus"
 )
 

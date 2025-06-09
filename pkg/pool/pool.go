@@ -3,8 +3,8 @@ package pool
 import (
 	"sync"
 
-	"flybeeper.com/fanet-api/internal/models"
-	"flybeeper.com/fanet-api/pkg/pb"
+	"github.com/flybeeper/fanet-backend/internal/models"
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 )
 
 // ObjectPools содержит все пулы объектов для переиспользования
@@ -21,7 +21,7 @@ type ObjectPools struct {
 	pbStationPool     sync.Pool
 	pbUpdatePool      sync.Pool
 	pbUpdateBatchPool sync.Pool
-	pbPositionPool    sync.Pool
+	pbGeoPointPool    sync.Pool
 	
 	// Слайсы и мапы
 	stringMapPool sync.Pool
@@ -62,21 +62,21 @@ var Global = &ObjectPools{
 	pbPilotPool: sync.Pool{
 		New: func() interface{} {
 			return &pb.Pilot{
-				Position: &pb.Position{},
+				Position: &pb.GeoPoint{},
 			}
 		},
 	},
 	pbThermalPool: sync.Pool{
 		New: func() interface{} {
 			return &pb.Thermal{
-				Position: &pb.Position{},
+				Position: &pb.GeoPoint{},
 			}
 		},
 	},
 	pbStationPool: sync.Pool{
 		New: func() interface{} {
 			return &pb.Station{
-				Position: &pb.Position{},
+				Position: &pb.GeoPoint{},
 			}
 		},
 	},
@@ -92,9 +92,9 @@ var Global = &ObjectPools{
 			}
 		},
 	},
-	pbPositionPool: sync.Pool{
+	pbGeoPointPool: sync.Pool{
 		New: func() interface{} {
-			return &pb.Position{}
+			return &pb.GeoPoint{}
 		},
 	},
 	
@@ -225,14 +225,16 @@ func (p *ObjectPools) GetPbPilot() *pb.Pilot {
 // PutPbPilot возвращает Protobuf Pilot в пул
 func (p *ObjectPools) PutPbPilot(pilot *pb.Pilot) {
 	// Очищаем объект
-	pilot.Address = ""
+	pilot.Addr = 0
 	pilot.Name = ""
 	pilot.Type = 0
 	pilot.Altitude = 0
 	pilot.Speed = 0
-	pilot.Heading = 0
-	pilot.ClimbRate = 0
-	pilot.LastSeen = 0
+	pilot.Course = 0
+	pilot.Climb = 0
+	pilot.LastUpdate = 0
+	pilot.TrackOnline = false
+	pilot.Battery = 0
 	
 	if pilot.Position != nil {
 		pilot.Position.Latitude = 0
@@ -249,13 +251,14 @@ func (p *ObjectPools) GetPbThermal() *pb.Thermal {
 
 // PutPbThermal возвращает Protobuf Thermal в пул
 func (p *ObjectPools) PutPbThermal(thermal *pb.Thermal) {
-	thermal.Id = ""
-	thermal.ReportedBy = ""
+	thermal.Id = 0
+	thermal.Addr = 0
 	thermal.Altitude = 0
 	thermal.Quality = 0
-	thermal.ClimbRate = 0
-	thermal.PilotCount = 0
-	thermal.LastSeen = 0
+	thermal.Climb = 0
+	thermal.WindSpeed = 0
+	thermal.WindHeading = 0
+	thermal.Timestamp = 0
 	
 	if thermal.Position != nil {
 		thermal.Position.Latitude = 0
@@ -272,15 +275,16 @@ func (p *ObjectPools) GetPbStation() *pb.Station {
 
 // PutPbStation возвращает Protobuf Station в пул
 func (p *ObjectPools) PutPbStation(station *pb.Station) {
-	station.ChipId = ""
+	station.Addr = 0
 	station.Name = ""
 	station.Temperature = 0
 	station.WindSpeed = 0
-	station.WindDirection = 0
+	station.WindHeading = 0
 	station.WindGusts = 0
 	station.Humidity = 0
 	station.Pressure = 0
-	station.LastSeen = 0
+	station.Battery = 0
+	station.LastUpdate = 0
 	
 	if station.Position != nil {
 		station.Position.Latitude = 0
@@ -298,11 +302,9 @@ func (p *ObjectPools) GetPbUpdate() *pb.Update {
 // PutPbUpdate возвращает Protobuf Update в пул
 func (p *ObjectPools) PutPbUpdate(update *pb.Update) {
 	update.Type = 0
-	update.Timestamp = 0
+	update.Action = 0
+	update.Data = nil
 	update.Sequence = 0
-	update.Pilot = nil
-	update.Thermal = nil
-	update.Station = nil
 	
 	p.pbUpdatePool.Put(update)
 }
@@ -324,7 +326,7 @@ func (p *ObjectPools) PutPbUpdateBatch(batch *pb.UpdateBatch) {
 	
 	// Очищаем слайс но сохраняем capacity
 	batch.Updates = batch.Updates[:0]
-	batch.Sequence = 0
+	batch.Timestamp = 0
 	
 	p.pbUpdateBatchPool.Put(batch)
 }

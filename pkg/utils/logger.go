@@ -245,6 +245,9 @@ func levelString(level LogLevel) string {
 // Default logger instance
 var defaultLogger = NewLogger("info", "text")
 
+// DefaultLogger экспортированная переменная для совместимости с broadcast.go
+var DefaultLogger = defaultLogger
+
 // SetDefaultLogger устанавливает логгер по умолчанию
 func SetDefaultLogger(logger *Logger) {
 	defaultLogger = logger

@@ -5,11 +5,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"flybeeper.com/fanet-api/internal/geo"
-	"flybeeper.com/fanet-api/internal/models"
-	"flybeeper.com/fanet-api/pkg/pb"
-	"flybeeper.com/fanet-api/pkg/pool"
-	"flybeeper.com/fanet-api/pkg/utils"
+	"github.com/flybeeper/fanet-backend/internal/geo"
+	"github.com/flybeeper/fanet-backend/internal/models"
+	"github.com/flybeeper/fanet-backend/pkg/pb"
+	"github.com/flybeeper/fanet-backend/pkg/pool"
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/proto"
 )
@@ -94,7 +93,7 @@ func NewBroadcastManager(spatial *geo.SpatialIndex) *BroadcastManager {
 		batchSize:  50,
 		batchTime:  100 * time.Millisecond,
 		metrics:    &BroadcastMetrics{},
-		logger:     utils.Logger.WithField("component", "broadcast"),
+		logger:     logrus.NewEntry(logrus.New()).WithField("component", "broadcast"),
 	}
 	
 	// Start background workers
@@ -254,17 +253,17 @@ func (bm *BroadcastManager) processBatch(batch []*UpdatePacket) {
 		
 		// Extract coordinates based on type
 		switch update.Type {
-		case pb.UpdateType_PILOT_UPDATE:
+		case pb.UpdateType_UPDATE_TYPE_PILOT:
 			if update.Pilot != nil && update.Pilot.Position != nil {
 				lat = update.Pilot.Position.Latitude
 				lon = update.Pilot.Position.Longitude
 			}
-		case pb.UpdateType_THERMAL_UPDATE:
+		case pb.UpdateType_UPDATE_TYPE_THERMAL:
 			if update.Thermal != nil && update.Thermal.Position != nil {
 				lat = update.Thermal.Position.Latitude
 				lon = update.Thermal.Position.Longitude
 			}
-		case pb.UpdateType_STATION_UPDATE:
+		case pb.UpdateType_UPDATE_TYPE_STATION:
 			if update.Station != nil && update.Station.Position != nil {
 				lat = update.Station.Position.Latitude
 				lon = update.Station.Position.Longitude
@@ -312,7 +311,7 @@ func (bm *BroadcastManager) broadcastToGroup(group *GeohashGroup, updates []*Upd
 	
 	// Build update batch message using pool
 	updateBatch := pool.Global.GetPbUpdateBatch()
-	updateBatch.Sequence = uint64(time.Now().UnixNano())
+	updateBatch.Timestamp = time.Now().Unix()
 	
 	// Deduplicate updates by object ID
 	seen := make(map[string]bool)
@@ -321,23 +320,36 @@ func (bm *BroadcastManager) broadcastToGroup(group *GeohashGroup, updates []*Upd
 		var objID string
 		pbUpdate := pool.Global.GetPbUpdate()
 		pbUpdate.Type = update.Type
-		pbUpdate.Timestamp = update.Timestamp.Unix()
+		pbUpdate.Action = pb.Action_ACTION_UPDATE
+		pbUpdate.Sequence = uint64(update.Timestamp.UnixNano())
 		
 		switch update.Type {
-		case pb.UpdateType_PILOT_UPDATE:
+		case pb.UpdateType_UPDATE_TYPE_PILOT:
 			if update.Pilot != nil {
-				objID = update.Pilot.Address
-				pbUpdate.Pilot = update.Pilot.ToProto()
+				objID = update.Pilot.DeviceID
+				pbPilot := update.Pilot.ToProto()
+				data, err := proto.Marshal(pbPilot)
+				if err == nil {
+					pbUpdate.Data = data
+				}
 			}
-		case pb.UpdateType_THERMAL_UPDATE:
+		case pb.UpdateType_UPDATE_TYPE_THERMAL:
 			if update.Thermal != nil {
 				objID = update.Thermal.ID
-				pbUpdate.Thermal = update.Thermal.ToProto()
+				pbThermal := update.Thermal.ToProto()
+				data, err := proto.Marshal(pbThermal)
+				if err == nil {
+					pbUpdate.Data = data
+				}
 			}
-		case pb.UpdateType_STATION_UPDATE:
+		case pb.UpdateType_UPDATE_TYPE_STATION:
 			if update.Station != nil {
-				objID = update.Station.ChipID
-				pbUpdate.Station = update.Station.ToProto()
+				objID = update.Station.ID
+				pbStation := update.Station.ToProto()
+				data, err := proto.Marshal(pbStation)
+				if err == nil {
+					pbUpdate.Data = data
+				}
 			}
 		}
 		
@@ -371,17 +383,17 @@ func (bm *BroadcastManager) broadcastToGroup(group *GeohashGroup, updates []*Upd
 				var lat, lon float64
 				
 				switch update.Type {
-				case pb.UpdateType_PILOT_UPDATE:
+				case pb.UpdateType_UPDATE_TYPE_PILOT:
 					if update.Pilot != nil && update.Pilot.Position != nil {
 						lat = update.Pilot.Position.Latitude
 						lon = update.Pilot.Position.Longitude
 					}
-				case pb.UpdateType_THERMAL_UPDATE:
+				case pb.UpdateType_UPDATE_TYPE_THERMAL:
 					if update.Thermal != nil && update.Thermal.Position != nil {
 						lat = update.Thermal.Position.Latitude
 						lon = update.Thermal.Position.Longitude
 					}
-				case pb.UpdateType_STATION_UPDATE:
+				case pb.UpdateType_UPDATE_TYPE_STATION:
 					if update.Station != nil && update.Station.Position != nil {
 						lat = update.Station.Position.Latitude
 						lon = update.Station.Position.Longitude

@@ -8,10 +8,10 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"flybeeper.com/fanet-api/internal/auth"
-	"flybeeper.com/fanet-api/internal/config"
-	"flybeeper.com/fanet-api/internal/repository"
-	"flybeeper.com/fanet-api/pkg/utils"
+	"github.com/flybeeper/fanet-backend/internal/auth"
+	"github.com/flybeeper/fanet-backend/internal/config"
+	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/pkg/utils"
 	"github.com/redis/go-redis/v9"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/time/rate"
@@ -48,12 +48,13 @@ func NewServer(cfg *config.Config, repo repository.Repository, redisClient *redi
 	// REST handler
 	restHandler := NewRESTHandler(repo, logger)
 	
-	// WebSocket handler
-	wsHandler := NewWebSocketHandler(repo, logger)
-
-	// Auth middleware - создаем logrus.Logger для совместимости
+	// WebSocket handler - создаем logrus.Entry для совместимости
 	logrusLogger := logrus.New()
 	logrusLogger.SetLevel(logrus.InfoLevel)
+	logrusEntry := logrus.NewEntry(logrusLogger)
+	wsHandler := NewWebSocketHandler(repo, logrusEntry)
+
+	// Auth middleware - используем уже созданный logrus.Logger
 	
 	authCache := auth.NewCache(redisClient, cfg.Auth.CacheTTL)
 	authValidator := auth.NewValidator(cfg.Auth.Endpoint, authCache, logrusLogger)
@@ -118,7 +119,7 @@ func (s *Server) setupRoutes() {
 	s.router.GET("/metrics", s.metricsHandler)
 	
 	// pprof endpoints для профилирования (только в development)
-	if s.config.LogLevel == "debug" {
+	if s.config.Environment == "development" {
 		pprofGroup := s.router.Group("/debug/pprof")
 		{
 			pprofGroup.GET("/", gin.WrapF(pprof.Index))

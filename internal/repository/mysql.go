@@ -119,14 +119,14 @@ func (r *MySQLRepository) LoadInitialPilots(ctx context.Context, limit int) ([]*
 			DeviceID:     fmt.Sprintf("%06X", addr),
 			Name:         name,
 			AircraftType: uint8(aircraftType),
-			Position: models.GeoPoint{
+			Position: &models.GeoPoint{
 				Latitude:  lat,
 				Longitude: lon,
 				Altitude:  int16(altitude),
 			},
-			Speed:       uint16(speed),
+			Speed:       float32(speed),
 			ClimbRate:   int16(climb),
-			Heading:     uint16(course),
+			Heading:     float32(course),
 			TrackOnline: trackOnline == 1,
 			LastUpdate:  timestamp,
 			Battery:     100, // Неизвестно в legacy схеме
@@ -194,8 +194,8 @@ func (r *MySQLRepository) LoadInitialThermals(ctx context.Context, limit int) ([
 				Longitude: lon,
 			},
 			Altitude:      int32(altitude),
-			Quality:       uint8(quality),
-			ClimbRate:     int16(climb),
+			Quality:       int32(quality),
+			ClimbRate:     float32(climb),
 			WindSpeed:     uint8(float64(windSpeed) / 10 * 3.6), // м/с*10 -> км/ч
 			WindDirection: uint16(windHeading),
 			Timestamp:     time.Now(), // Неизвестно в legacy схеме
@@ -266,7 +266,7 @@ func (r *MySQLRepository) LoadInitialStations(ctx context.Context, limit int) ([
 		station := &models.Station{
 			ID:   fmt.Sprintf("%06X", addr),
 			Name: name,
-			Position: models.GeoPoint{
+			Position: &models.GeoPoint{
 				Latitude:  lat,
 				Longitude: lon,
 			},

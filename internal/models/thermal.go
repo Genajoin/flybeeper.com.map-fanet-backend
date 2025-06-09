@@ -3,6 +3,8 @@ package models
 import (
 	"fmt"
 	"time"
+	
+	"github.com/flybeeper/fanet-backend/pkg/pb"
 )
 
 // Thermal представляет термический поток
@@ -85,7 +87,7 @@ func (t *Thermal) Validate() error {
 
 	// Проверка скороподъемности (реалистичные значения)
 	if t.ClimbRate < -500 || t.ClimbRate > 2000 {
-		return fmt.Errorf("invalid climb rate: %d", t.ClimbRate)
+		return fmt.Errorf("invalid climb rate: %f", t.ClimbRate)
 	}
 
 	// Проверка скорости ветра
@@ -170,13 +172,13 @@ func (t *Thermal) FromRedisHash(id string, data map[string]string) error {
 	if quality, ok := data["quality"]; ok {
 		var q int
 		fmt.Sscanf(quality, "%d", &q)
-		t.Quality = uint8(q)
+		t.Quality = int32(q)
 	}
 
 	if climb, ok := data["climb_rate"]; ok {
-		var c int
-		fmt.Sscanf(climb, "%d", &c)
-		t.ClimbRate = int16(c)
+		var c float32
+		fmt.Sscanf(climb, "%f", &c)
+		t.ClimbRate = c
 	}
 
 	if windSpeed, ok := data["wind_speed"]; ok {
@@ -268,11 +270,40 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 		}
 
 		// Усредняем характеристики
-		result.ClimbRate = int16(sumClimb / float32(count))
-		result.Quality = uint8(sumQuality / float32(count))
+		result.ClimbRate = sumClimb / float32(count)
+		result.Quality = int32(sumQuality / float32(count))
 
 		merged = append(merged, result)
 	}
 
 	return merged
+}
+
+// ToProto конвертирует Thermal в protobuf представление
+func (t *Thermal) ToProto() *pb.Thermal {
+	thermal := &pb.Thermal{
+		Id:        0, // TODO: конвертировать string ID в uint64
+		Addr:      0, // TODO: конвертировать ReportedBy в uint32
+		Altitude:  t.Altitude,
+		Quality:   uint32(t.Quality),
+		Climb:     t.ClimbRate,
+		WindSpeed: float32(t.WindSpeed),
+		WindHeading: float32(t.WindDirection),
+		Timestamp: t.Timestamp.Unix(),
+	}
+	
+	// Используем Position или Center
+	var lat, lon float64
+	if t.Position != nil {
+		lat, lon = t.Position.Latitude, t.Position.Longitude
+	} else {
+		lat, lon = t.Center.Latitude, t.Center.Longitude
+	}
+	
+	thermal.Position = &pb.GeoPoint{
+		Latitude:  lat,
+		Longitude: lon,
+	}
+	
+	return thermal
 }
