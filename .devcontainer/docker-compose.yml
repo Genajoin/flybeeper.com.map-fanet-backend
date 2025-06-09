@@ -1,0 +1,166 @@
+version: '3.8'
+
+services:
+  # Main development container
+  app:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      - /var/run/docker.sock:/var/run/docker.sock
+    working_dir: /workspace
+    command: sleep infinity
+    environment:
+      - GO111MODULE=on
+      - GOPROXY=https://proxy.golang.org,direct
+      - GOSUMDB=sum.golang.org
+      - CGO_ENABLED=1
+      # Development environment variables
+      - SERVER_PORT=8090
+      - REDIS_URL=redis://redis:6379
+      - MQTT_URL=tcp://mqtt:1883
+      - MYSQL_DSN=root:password@tcp(mysql:3306)/fanet?parseTime=true
+      - AUTH_ENDPOINT=https://api.flybeeper.com/api/v4/user
+      - AUTH_CACHE_TTL=5m
+      - DEFAULT_RADIUS_KM=200
+      - LOG_LEVEL=debug
+    networks:
+      - fanet-dev
+    depends_on:
+      - redis
+      - mqtt
+      - mysql
+
+  # Redis for caching and geospatial queries
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - fanet-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Commander for Redis management
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    ports:
+      - "8081:8081"
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    networks:
+      - fanet-dev
+    depends_on:
+      - redis
+
+  # Eclipse Mosquitto MQTT broker
+  mqtt:
+    image: eclipse-mosquitto:2
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ../deployments/docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt-data:/mosquitto/data
+      - mqtt-logs:/mosquitto/log
+    networks:
+      - fanet-dev
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "test", "-m", "test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MySQL for persistent storage
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: fanet
+      MYSQL_USER: fanet
+      MYSQL_PASSWORD: fanet123
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ../ai-spec/database/legacy-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    networks:
+      - fanet-dev
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --max_connections=200
+      --innodb_buffer_pool_size=256M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Adminer for MySQL management
+  adminer:
+    image: adminer:4
+    ports:
+      - "8082:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: mysql
+    networks:
+      - fanet-dev
+    depends_on:
+      - mysql
+
+  # Prometheus for metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../deployments/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - fanet-dev
+
+  # Grafana for monitoring dashboards (optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../deployments/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ../deployments/monitoring/dashboards:/etc/grafana/provisioning/dashboards:ro
+    networks:
+      - fanet-dev
+    depends_on:
+      - prometheus
+
+networks:
+  fanet-dev:
+    driver: bridge
+
+volumes:
+  redis-data:
+  mysql-data:
+  mqtt-data:
+  mqtt-logs:
+  prometheus-data:
+  grafana-data:

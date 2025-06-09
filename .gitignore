@@ -67,3 +67,4 @@ pkg/pb/*.pb.go
 .env.local
 .env.*.local
 scripts/mqtt-test-publisher
+.claude/settings.local.json
