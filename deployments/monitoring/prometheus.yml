@@ -14,7 +14,7 @@ alerting:
 scrape_configs:
   - job_name: 'fanet-api'
     static_configs:
-      - targets: ['host.docker.internal:8090']  # Для Docker Desktop
+      - targets: ['app:8090']  # Devcontainer service name
         labels:
           service: 'fanet-api'
           environment: 'development'
@@ -26,16 +26,11 @@ scrape_configs:
     static_configs:
       - targets: ['localhost:9090']
 
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['host.docker.internal:6379']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-    # Redis exporter можно добавить при необходимости
-
-  - job_name: 'mysql'
-    static_configs:
-      - targets: ['host.docker.internal:3306']
-    metrics_path: '/metrics'
-    scrape_interval: 30s
-    # MySQL exporter можно добавить при необходимости
+  # Redis и MySQL exporters можно добавить при необходимости
+  # - job_name: 'redis-exporter'
+  #   static_configs:
+  #     - targets: ['redis-exporter:9121']
+  # 
+  # - job_name: 'mysql-exporter'
+  #   static_configs:
+  #     - targets: ['mysql-exporter:9104']

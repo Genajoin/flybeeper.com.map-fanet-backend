@@ -13,7 +13,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Значения по умолчанию
-BROKER_URL="tcp://localhost:1883"
+BROKER_URL="${MQTT_URL:-tcp://localhost:1883}"
 CHIP_IDS="8896672,7048812,2462966788"
 PACKET_TYPES="1,2,4,7,9"
 RATE="2s"

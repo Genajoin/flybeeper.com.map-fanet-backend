@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # Main development container
@@ -20,7 +20,7 @@ services:
       - CGO_ENABLED=1
       # Development environment variables
       - SERVER_PORT=8090
-      - SERVER_ADDRESS=0.0.0.0:8090
+      # - SERVER_ADDRESS=0.0.0.0:8090
       - REDIS_URL=redis://redis:6379
       - MQTT_URL=tcp://mqtt:1883
       - MYSQL_DSN=root:password@tcp(mysql:3306)/fanet?parseTime=true
@@ -70,13 +70,14 @@ services:
       - "1883:1883"
       - "9001:9001"
     volumes:
-      - ../deployments/docker/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ../deployments/docker/mosquitto-simple.conf:/mosquitto/config/mosquitto.conf:ro
       - mqtt-data:/mosquitto/data
       - mqtt-logs:/mosquitto/log
     networks:
       - fanet-dev
     healthcheck:
-      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "test", "-m", "test"]
+      test:
+        ["CMD", "mosquitto_pub", "-h", "localhost", "-t", "test", "-m", "test"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -103,7 +104,17 @@ services:
       --max_connections=200
       --innodb_buffer_pool_size=256M
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      test:
+        [
+          "CMD",
+          "mysqladmin",
+          "ping",
+          "-h",
+          "localhost",
+          "-u",
+          "root",
+          "-ppassword",
+        ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -129,12 +140,12 @@ services:
       - ../deployments/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--web.console.libraries=/etc/prometheus/console_libraries'
-      - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=200h'
-      - '--web.enable-lifecycle'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--storage.tsdb.retention.time=200h"
+      - "--web.enable-lifecycle"
     networks:
       - fanet-dev
 
