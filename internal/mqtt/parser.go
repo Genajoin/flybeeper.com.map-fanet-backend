@@ -123,7 +123,9 @@ func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
 	
 	// Валидация соответствия packet_type из топика и FANET заголовка
 	if expectedType := fmt.Sprintf("%d", msgType); packetType != expectedType {
-		return nil, fmt.Errorf("packet type mismatch: topic has %s, FANET header has %d", packetType, msgType)
+		p.logger.WithField("topic_type", packetType).WithField("fanet_type", msgType).WithField("device_id", deviceID).
+			Warn("Packet type mismatch between topic and FANET header, skipping message")
+		return nil, nil // Пропускаем сообщение, но не возвращаем ошибку
 	}
 
 	msg := &FANETMessage{

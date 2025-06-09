@@ -471,16 +471,17 @@ func (r *MySQLRepository) SavePilotsBatch(ctx context.Context, pilots []*models.
 	}
 	defer tx.Rollback()
 
-	// Подготавливаем batch INSERT для ufo_track
-	trackQuery := `
-		INSERT INTO ufo_track (
-			addr, ufo_type, latitude, longitude, altitude_gps,
-			speed, climb, course, track_online, datestamp
-		) VALUES ` + r.generatePlaceholders(len(pilots), 10)
-
+	// Сначала собираем валидные данные
 	trackArgs := make([]interface{}, 0, len(pilots)*10)
+	validPilots := 0
 
 	for _, pilot := range pilots {
+		// Проверяем на nil Position
+		if pilot.Position == nil {
+			r.logger.WithField("device_id", pilot.DeviceID).Warn("Pilot has nil position, skipping")
+			continue
+		}
+
 		// Конвертируем hex device ID в int
 		addr, err := strconv.ParseInt(pilot.DeviceID, 16, 32)
 		if err != nil {
@@ -492,7 +493,21 @@ func (r *MySQLRepository) SavePilotsBatch(ctx context.Context, pilots []*models.
 			addr, pilot.AircraftType, pilot.Position.Latitude, pilot.Position.Longitude,
 			pilot.Position.Altitude, pilot.Speed, pilot.ClimbRate, pilot.Heading,
 			pilot.TrackOnline, pilot.LastUpdate)
+		validPilots++
 	}
+
+	// Проверяем есть ли валидные данные
+	if validPilots == 0 {
+		r.logger.Warn("No valid pilots to save in batch")
+		return nil
+	}
+
+	// Подготавливаем batch INSERT для ufo_track
+	trackQuery := `
+		INSERT INTO ufo_track (
+			addr, ufo_type, latitude, longitude, altitude_gps,
+			speed, climb, course, track_online, datestamp
+		) VALUES ` + r.generatePlaceholders(validPilots, 10)
 
 	// Выполняем batch INSERT для треков
 	result, err := tx.ExecContext(ctx, trackQuery, trackArgs...)
