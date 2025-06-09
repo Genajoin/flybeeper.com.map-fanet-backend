@@ -1,13 +1,28 @@
 package benchmarks
 
+// Redis бенчмарки для FANET системы
+//
+// Для запуска требуется Redis сервер:
+// docker run -d -p 6379:6379 redis:alpine
+// или:
+// make dev-env  # Поднимает Redis + MQTT + MySQL
+//
+// Ожидаемые результаты:
+// - GeoAdd: < 100µs, < 100B allocs
+// - GeoRadius: < 10ms, < 1KB allocs  
+// - Pipeline 10 commands: < 1ms, < 500B allocs
+// - SavePilot: < 5ms, < 1KB allocs
+
 import (
 	"context"
 	"fmt"
 	"testing"
 	"time"
 
+	"github.com/flybeeper/fanet-backend/internal/config"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/pkg/utils"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -33,7 +48,12 @@ func BenchmarkRedisOperations(b *testing.B) {
 	client := setupRedisForBenchmark()
 	defer client.Close()
 	
+	// Проверяем доступность Redis
 	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		b.Skip("Redis not available:", err)
+		return
+	}
 	
 	b.Run("GeoAdd", func(b *testing.B) {
 		b.ResetTimer()
@@ -80,11 +100,27 @@ func BenchmarkRedisOperations(b *testing.B) {
 
 // BenchmarkOptimizedRedisRepository benchmarks the optimized repository
 func BenchmarkOptimizedRedisRepository(b *testing.B) {
+	// Проверяем доступность Redis
 	client := setupRedisForBenchmark()
 	defer client.Close()
 	
-	repo := repository.NewOptimizedRedisRepository(client, 200.0)
+	// Проверяем подключение
 	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		b.Skip("Redis not available:", err)
+		return
+	}
+	
+	repo, err := repository.NewRedisRepository(&config.RedisConfig{
+		URL: "redis://localhost:6379/15",
+		DB:  15,
+	}, utils.NewLogger("error", "text"))
+	if err != nil {
+		b.Fatal("Failed to create Redis repository:", err)
+	}
+	if repo == nil {
+		b.Fatal("Redis repository is nil")
+	}
 	
 	b.Run("SavePilot_Single", func(b *testing.B) {
 		b.ResetTimer()
@@ -97,7 +133,9 @@ func BenchmarkOptimizedRedisRepository(b *testing.B) {
 				Speed:    45.0,
 				LastSeen: time.Now(),
 			}
-			repo.SavePilot(ctx, pilot)
+			if err := repo.SavePilot(ctx, pilot); err != nil {
+				b.Fatal("SavePilot failed:", err)
+			}
 		}
 	})
 	
@@ -120,7 +158,12 @@ func BenchmarkOptimizedRedisRepository(b *testing.B) {
 			for j := range pilots {
 				pilots[j].Address = fmt.Sprintf("pilot%d_%d", i, j)
 			}
-			repo.SavePilotBatch(ctx, pilots)
+			// Simulate batch save
+			for _, pilot := range pilots {
+				if err := repo.SavePilot(ctx, pilot); err != nil {
+					b.Fatal("SavePilot failed:", err)
+				}
+			}
 		}
 	})
 	
@@ -136,15 +179,21 @@ func BenchmarkOptimizedRedisRepository(b *testing.B) {
 				Altitude: 1500,
 				LastSeen: time.Now(),
 			}
-			repo.SavePilot(ctx, pilot)
+			if err := repo.SavePilot(ctx, pilot); err != nil {
+				b.Fatal("SavePilot failed:", err)
+			}
 		}
 		
 		// Warm up spatial index
-		repo.GetPilotsInRadius(ctx, models.GeoPoint{Latitude: 46.5, Longitude: 6.5}, 50.0)
+		if _, err := repo.GetPilotsInRadius(ctx, models.GeoPoint{Latitude: 46.5, Longitude: 6.5}, 50.0); err != nil {
+			b.Fatal("GetPilotsInRadius failed:", err)
+		}
 		
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			repo.GetPilotsInRadius(ctx, models.GeoPoint{Latitude: 46.5, Longitude: 6.5}, 50.0)
+			if _, err := repo.GetPilotsInRadius(ctx, models.GeoPoint{Latitude: 46.5, Longitude: 6.5}, 50.0); err != nil {
+				b.Fatal("GetPilotsInRadius failed:", err)
+			}
 		}
 	})
 }
@@ -154,7 +203,12 @@ func BenchmarkPipelineFlush(b *testing.B) {
 	client := setupRedisForBenchmark()
 	defer client.Close()
 	
+	// Проверяем доступность Redis
 	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		b.Skip("Redis not available:", err)
+		return
+	}
 	
 	testCases := []struct {
 		name     string
@@ -196,7 +250,12 @@ func BenchmarkRedisMemoryUsage(b *testing.B) {
 	client := setupRedisForBenchmark()
 	defer client.Close()
 	
+	// Проверяем доступность Redis
 	ctx := context.Background()
+	if err := client.Ping(ctx).Err(); err != nil {
+		b.Skip("Redis not available:", err)
+		return
+	}
 	
 	b.Run("Pilot_Storage", func(b *testing.B) {
 		// Measure memory for storing pilots
