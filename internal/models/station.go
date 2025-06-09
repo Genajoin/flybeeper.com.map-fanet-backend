@@ -208,6 +208,31 @@ func (s *Station) ToRedisHash() map[string]interface{} {
 	return hash
 }
 
+// ToProto конвертирует Station в protobuf представление
+func (s *Station) ToProto() *pb.Station {
+	station := &pb.Station{
+		Addr:        0, // TODO: конвертировать ID в uint32
+		Name:        s.Name,
+		Temperature: float32(s.Temperature),
+		WindSpeed:   float32(s.WindSpeed),
+		WindHeading: float32(s.WindDirection),
+		WindGusts:   float32(s.WindGusts),
+		Humidity:    uint32(s.Humidity),
+		Pressure:    float32(s.Pressure),
+		Battery:     uint32(s.Battery),
+		LastUpdate:  s.LastUpdate.Unix(),
+	}
+	
+	if s.Position != nil {
+		station.Position = &pb.GeoPoint{
+			Latitude:  s.Position.Latitude,
+			Longitude: s.Position.Longitude,
+		}
+	}
+	
+	return station
+}
+
 // FromRedisHash восстанавливает станцию из Redis hash
 func (s *Station) FromRedisHash(id string, data map[string]string) error {
 	s.ID = id
