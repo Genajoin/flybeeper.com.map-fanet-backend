@@ -74,6 +74,27 @@
         "go.coverOnSingleTest": true,
         "go.coverOnSingleTestFile": true,
         "go.coverOnTestPackage": true,
+
+        // Code Spell Checker settings
+        "cSpell.language": "en,ru",
+        "cSpell.enableFiletypes": [
+          "go",
+          "markdown",
+          "yaml",
+          "json",
+          "dockerfile",
+          "plaintext",
+          "proto3"
+        ],
+        "cSpell.dictionaries": [
+          "en_US",
+          "russian",
+          "companies",
+          "softwareTerms",
+          "golang",
+          "kubernetes",
+          "docker"
+        ],
         
         // Editor settings
         "editor.formatOnSave": true,
@@ -119,7 +140,8 @@
   "portsAttributes": {
     "8090": {
       "label": "FANET API",
-      "protocol": "http"
+      "protocol": "http",
+      "onAutoForward": "openBrowser"
     },
     "6379": {
       "label": "Redis"
@@ -132,24 +154,28 @@
     },
     "8081": {
       "label": "Redis Commander",
-      "protocol": "http"
+      "protocol": "http",
+      "onAutoForward": "notify"
     },
     "8082": {
       "label": "Adminer (MySQL)",
-      "protocol": "http"
+      "protocol": "http",
+      "onAutoForward": "notify"
     },
     "9090": {
       "label": "Prometheus",
-      "protocol": "http"
+      "protocol": "http",
+      "onAutoForward": "notify"
     },
     "3000": {
       "label": "Grafana",
-      "protocol": "http"
+      "protocol": "http",
+      "onAutoForward": "notify"
     }
   },
 
   // Commands to run after container creation
-  "postCreateCommand": "/workspace/.devcontainer/postCreate.sh",
+  "postCreateCommand": "bash -c 'echo \"🚀 Setting up FANET API Backend development environment...\" && cd /workspace && go mod download && go mod tidy && echo \"📦 Generating protobuf...\" && (make proto || echo \"⚠️ Proto generation failed - checking details...\") && echo \"📁 Creating directories...\" && mkdir -p tmp bin logs && echo \"🔨 Building project...\" && (go build -o bin/fanet-api cmd/fanet-api/main.go && echo \"✅ Build successful!\") && echo \"🎉 Development environment setup complete!\"'",
   
   // Mount the local Docker socket for Docker-in-Docker
   "mounts": [

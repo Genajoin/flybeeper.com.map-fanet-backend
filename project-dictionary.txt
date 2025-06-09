@@ -1,0 +1,54 @@
+# Project Dictionary for FANET API Backend
+# Специальные термины проекта, которые не находятся в стандартных словарях
+
+# Названия проекта и компании
+flybeeper
+genajoin
+
+# FANET протокол и авиация
+fanet
+paragliding
+hanggliding
+thermals
+thermaling
+altimeter
+variometer
+tracklog
+waypoint
+airspace
+
+# Технические сокращения проекта
+mqtt
+grpc
+protobuf
+kubernetes
+redis
+geohash
+websocket
+dockerfile
+
+# Сленг и жаргон разработки
+backend
+frontend
+middleware
+webhook
+hotreload
+stateless
+stateful
+scalable
+performant
+
+# Русские технические термины
+разработка
+сборка
+запуск
+развертывание
+мониторинг
+логирование
+кеширование
+производительность
+масштабирование
+оптимизация
+интеграция
+аутентификация
+авторизация

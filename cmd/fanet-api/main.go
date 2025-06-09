@@ -169,6 +169,17 @@ func main() {
 		return nil
 	}
 
+	// Запускаем HTTP сервер в горутине
+	go func() {
+		logger.WithField("address", cfg.Server.Address).Info("Starting HTTP/2 server")
+		if err := server.Start(); err != nil {
+			logger.WithField("error", err).Fatal("Failed to start HTTP server")
+		}
+	}()
+
+	// Даем серверу время на запуск
+	time.Sleep(1 * time.Second)
+
 	// Инициализируем MQTT клиент с готовым messageHandler
 	mqttClient, err := mqtt.NewClient(&cfg.MQTT, logger, messageHandler)
 	if err != nil {
@@ -176,17 +187,13 @@ func main() {
 	}
 	defer mqttClient.Disconnect()
 
-	// Подключаемся к MQTT
-	if err := mqttClient.Connect(); err != nil {
-		logger.WithField("error", err).Fatal("Failed to connect to MQTT broker")
-	}
-	logger.Info("Connected to MQTT broker")
-
-	// Запускаем HTTP сервер в горутине
+	// Подключаемся к MQTT в горутине (неблокирующе)
 	go func() {
-		logger.WithField("address", cfg.Server.Address).Info("Starting HTTP/2 server")
-		if err := server.Start(); err != nil {
-			logger.WithField("error", err).Fatal("Failed to start HTTP server")
+		logger.WithField("broker", cfg.MQTT.URL).Info("Connecting to MQTT broker")
+		if err := mqttClient.Connect(); err != nil {
+			logger.WithField("error", err).Error("Failed to connect to MQTT broker")
+		} else {
+			logger.Info("Connected to MQTT broker")
 		}
 	}()
 

@@ -34,11 +34,12 @@ deps:
 # Generate protobuf files
 proto:
 	@echo "Generating protobuf files..."
-	@protoc --go_out=. --go_opt=paths=source_relative \
-		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
+	@mkdir -p pkg/pb
+	@protoc --go_out=pkg/pb --go_opt=paths=source_relative \
+		--go-grpc_out=pkg/pb --go-grpc_opt=paths=source_relative \
+		-I ai-spec/api \
 		ai-spec/api/fanet.proto
-	@mv ai-spec/api/fanet.pb.go pkg/pb/
-	@mv ai-spec/api/fanet_grpc.pb.go pkg/pb/
+	@echo "Protobuf generation completed!"
 
 # Run tests
 test:

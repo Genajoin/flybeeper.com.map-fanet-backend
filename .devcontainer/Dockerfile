@@ -55,6 +55,8 @@ RUN go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest \
 # Set up workspace
 WORKDIR /workspace
 
+# Remove postCreate script copy (using inline command instead)
+
 # Configure Git (will be overridden by user settings)
 RUN git config --global init.defaultBranch main \
     && git config --global pull.rebase false
