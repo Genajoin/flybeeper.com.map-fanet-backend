@@ -1,0 +1,97 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: fanet-backend-dev
+  annotations:
+    description: "Development overlay для FANET Backend"
+
+# Базовая конфигурация
+bases:
+- ../../
+
+# Namespace для dev
+namespace: fanet-dev
+
+# Dev образы (latest для разработки)
+images:
+- name: flybeeper/fanet-api
+  newTag: latest
+
+# Минимальные replicas для dev
+replicas:
+- name: fanet-api
+  count: 1
+- name: redis-cluster
+  count: 3
+
+# Development ConfigMap
+configMapGenerator:
+- name: fanet-config-dev
+  behavior: merge
+  literals:
+  - ENVIRONMENT=development
+  - LOG_LEVEL=debug
+  - METRICS_ENABLED=true
+  - ENABLE_PROFILING=true
+  - REDIS_POOL_SIZE=10
+  - MAX_BATCH_SIZE=50
+  - WORKER_POOL_SIZE=10
+
+# Development patches
+patches:
+- target:
+    kind: Deployment
+    name: fanet-api
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: "128Mi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/cpu
+      value: "100m"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/memory
+      value: "256Mi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/cpu
+      value: "200m"
+    - op: add
+      path: /spec/template/metadata/annotations/debug
+      value: "true"
+
+- target:
+    kind: HorizontalPodAutoscaler
+    name: fanet-api-hpa
+  patch: |-
+    - op: replace
+      path: /spec/minReplicas
+      value: 1
+    - op: replace
+      path: /spec/maxReplicas
+      value: 3
+    - op: replace
+      path: /spec/metrics/0/resource/target/averageUtilization
+      value: 80
+
+- target:
+    kind: Ingress
+    name: fanet-api
+  patch: |-
+    - op: replace
+      path: /spec/rules/0/host
+      value: "dev-api.flybeeper.com"
+    - op: remove
+      path: /metadata/annotations/cert-manager.io~1cluster-issuer
+    - op: remove
+      path: /spec/tls
+
+# Убираем NetworkPolicy для dev (для простоты отладки)
+- target:
+    kind: NetworkPolicy
+  patch: |-
+    $patch: delete
+
+# Dev secrets (локальные сервисы)
+patchesStrategicMerge:
+- secrets-dev.yaml

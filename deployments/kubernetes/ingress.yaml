@@ -1,0 +1,167 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fanet-api
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: ingress
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    # Ingress class and SSL
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # CORS настройки для frontend интеграции
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://maps.flybeeper.com,https://flybeeper.com,https://www.flybeeper.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS, PUT, DELETE"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization,Accept,Accept-Encoding,Accept-Language,Origin,Referer"
+    nginx.ingress.kubernetes.io/cors-allow-credentials: "true"
+    nginx.ingress.kubernetes.io/cors-max-age: "3600"
+    
+    # WebSocket поддержка
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$http_upgrade"
+    
+    # HTTP/2 и производительность
+    nginx.ingress.kubernetes.io/http2-push-preload: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/proxy-buffers-number: "8"
+    
+    # Rate limiting для защиты от DDoS
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "100"
+    
+    # Безопасность
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256,ECDHE-RSA-AES128-GCM-SHA256,ECDHE-ECDSA-AES256-GCM-SHA384,ECDHE-RSA-AES256-GCM-SHA384"
+    
+    # Кеширование статических ресурсов
+    nginx.ingress.kubernetes.io/server-snippet: |
+      location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+      
+      # Специальные заголовки для API
+      location /api/ {
+        add_header X-Content-Type-Options nosniff;
+        add_header X-Frame-Options DENY;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Referrer-Policy "strict-origin-when-cross-origin";
+        add_header Permissions-Policy "geolocation=(), microphone=(), camera=()";
+      }
+      
+      # WebSocket специфичные настройки
+      location /ws/ {
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+      }
+spec:
+  tls:
+  - hosts:
+    - api.flybeeper.com
+    - fanet-api.flybeeper.com
+    secretName: fanet-api-tls
+  rules:
+  - host: api.flybeeper.com
+    http:
+      paths:
+      # REST API endpoints
+      - path: /api/v1
+        pathType: Prefix
+        backend:
+          service:
+            name: fanet-api
+            port:
+              number: 80
+      # WebSocket endpoints
+      - path: /ws
+        pathType: Prefix
+        backend:
+          service:
+            name: fanet-api
+            port:
+              number: 80
+      # Health checks (без авторизации)
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: fanet-api
+            port:
+              number: 80
+      - path: /ready
+        pathType: Exact
+        backend:
+          service:
+            name: fanet-api
+            port:
+              number: 80
+  - host: fanet-api.flybeeper.com
+    http:
+      paths:
+      # Все пути для альтернативного домена
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: fanet-api
+            port:
+              number: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fanet-api-metrics
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: metrics-ingress
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    
+    # Ограничение доступа только для мониторинга
+    nginx.ingress.kubernetes.io/whitelist-source-range: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      # Только для Prometheus и внутренних систем
+      if ($http_user_agent !~ "Prometheus") {
+        return 403;
+      }
+    
+    # Без CORS для metrics
+    nginx.ingress.kubernetes.io/enable-cors: "false"
+    
+    # Короткие таймауты для metrics
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "30"
+spec:
+  tls:
+  - hosts:
+    - metrics.flybeeper.com
+    secretName: fanet-metrics-tls
+  rules:
+  - host: metrics.flybeeper.com
+    http:
+      paths:
+      - path: /metrics
+        pathType: Exact
+        backend:
+          service:
+            name: fanet-api-metrics
+            port:
+              number: 9090

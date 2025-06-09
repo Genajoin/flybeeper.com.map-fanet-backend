@@ -140,7 +140,7 @@
 - [x] Приоритизация видимых объектов
 - [x] Delta compression подготовка
 
-## Этап 5: Deployment и интеграция (День 5) - 75% ЗАВЕРШЕН
+## ✅ Этап 5: Deployment и интеграция (День 5) - ЗАВЕРШЕН
 
 ### 5.1 Docker ✅ ЗАВЕРШЕН
 - [x] Multi-stage Dockerfile с Go 1.23-alpine и оптимизацией
@@ -148,11 +148,17 @@
 - [x] docker-compose для разработки с полным стеком
 - [x] Health checks с HEALTHCHECK директивой
 
-### 5.2 Kubernetes (пропущен согласно плану)
-- [ ] Deployment манифесты (директория пустая)
-- [ ] Service и Ingress 
-- [ ] ConfigMap и Secrets
-- [ ] HPA для автомасштабирования
+### 5.2 Kubernetes ✅ ЗАВЕРШЕН
+- [x] **Deployment манифесты** - production-ready с security contexts, probes, resource limits
+- [x] **Service и Ingress** - ClusterIP, headless, metrics services + nginx ingress с WebSocket поддержкой
+- [x] **ConfigMap и Secrets** - полная конфигурация из config.go + шаблоны секретов
+- [x] **HPA для автомасштабирования** - CPU/Memory/WebSocket автомасштабирование + custom metrics
+- [x] **NetworkPolicy** - сетевая безопасность с ingress/egress правилами
+- [x] **PodDisruptionBudget** - высокая доступность во время обновлений
+- [x] **Redis StatefulSet** - кластер Redis с persistence и мониторингом
+- [x] **ServiceMonitor** - интеграция с Prometheus Operator + алерты
+- [x] **Kustomize overlays** - управление dev/staging/production environments
+- [x] **Документация deployment** - полный README с инструкциями
 
 ### 5.3 Мониторинг ✅ ЗАВЕРШЕН
 - [x] **Prometheus метрики** - 15 групп метрик (/metrics endpoint)
@@ -217,7 +223,7 @@
 
 ## Текущий статус
 
-**Этапы 1-4 ПОЛНОСТЬЮ ЗАВЕРШЕНЫ** - FANET Backend оптимизирован и готов к production:
+**ВСЕ ЭТАПЫ 1-5 ПОЛНОСТЬЮ ЗАВЕРШЕНЫ** - FANET Backend готов к production deployment:
 
 ### ✅ Завершено (100%):
 - **MQTT клиент и FANET парсер** - полное соответствие спецификации ai-spec/mqtt/
@@ -228,6 +234,7 @@
 - **WebSocket handler** - real-time обновления с geohash фильтрацией
 - **MQTT-WebSocket интеграция** - полный pipeline MQTT→Redis→WebSocket
 - **Аутентификация** - полная интеграция с Laravel API, SSO, кеширование
+- **Kubernetes манифесты** - production-ready deployment с автомасштабированием, безопасностью и мониторингом
 
 ### ✅ Оптимизации (Этап 4):
 - **Геопространственная индексация** - QuadTree + LRU cache + Bloom filters
@@ -243,23 +250,38 @@
 - **Память**: < 100MB базовое потребление + ~100KB на соединение
 - **CPU**: < 30% при 10k активных соединений
 
-### 🚀 Запуск оптимизированной системы:
+### 🚀 Deployment Options:
+
+#### Локальная разработка:
 ```bash
 # Полная сборка с оптимизациями
 make deps && make proto
 make build
 
-# Запуск с профилированием (debug mode)
-LOG_LEVEL=debug ./fanet-api
+# Запуск среды разработки
+make dev-env && make dev
 
 # Benchmark тесты
 go test -bench=. ./benchmarks/...
 
 # Профилирование
 go tool pprof http://localhost:8090/debug/pprof/profile
-go tool pprof http://localhost:8090/debug/pprof/heap
+```
+
+#### Kubernetes Production:
+```bash
+# Development environment
+kubectl apply -k deployments/kubernetes/overlays/dev/
+
+# Production deployment
+kubectl apply -k deployments/kubernetes/overlays/production/
+
+# Мониторинг
+kubectl get pods -n fanet
+kubectl describe hpa fanet-api-hpa -n fanet
 ```
 
 ### 🎯 Следующие приоритеты:
-1. **Этап 5** - Production deployment (Docker/Kubernetes)
-3. **Frontend интеграция** - Подключение maps.flybeeper.com
+1. **Frontend интеграция** - Подключение maps.flybeeper.com к production API
+2. **Load testing** - Тестирование с реальными нагрузками в Kubernetes
+3. **Performance tuning** - Оптимизация на основе production метрик

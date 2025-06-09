@@ -1,0 +1,109 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: fanet-backend-production
+  annotations:
+    description: "Production overlay для FANET Backend"
+
+# Базовая конфигурация
+bases:
+- ../../
+
+# Суффикс для production
+nameSuffix: ""
+
+# Production образы
+images:
+- name: flybeeper/fanet-api
+  newTag: v1.0.0
+
+# Production replicas
+replicas:
+- name: fanet-api
+  count: 5
+- name: redis-cluster
+  count: 6
+
+# Production ConfigMap
+configMapGenerator:
+- name: fanet-config-prod
+  behavior: merge
+  literals:
+  - ENVIRONMENT=production
+  - LOG_LEVEL=info
+  - METRICS_ENABLED=true
+  - ENABLE_PROFILING=false
+  - REDIS_POOL_SIZE=200
+  - MAX_BATCH_SIZE=1000
+  - WORKER_POOL_SIZE=200
+
+# Production patches
+patches:
+- target:
+    kind: Deployment
+    name: fanet-api
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/memory
+      value: "512Mi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/requests/cpu
+      value: "500m"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/memory
+      value: "1Gi"
+    - op: replace
+      path: /spec/template/spec/containers/0/resources/limits/cpu
+      value: "1000m"
+    - op: add
+      path: /spec/template/metadata/annotations/prometheus.io~1port
+      value: "9090"
+    - op: add
+      path: /spec/template/metadata/annotations/fluentbit.io~1parser
+      value: "json"
+
+- target:
+    kind: HorizontalPodAutoscaler
+    name: fanet-api-hpa
+  patch: |-
+    - op: replace
+      path: /spec/minReplicas
+      value: 5
+    - op: replace
+      path: /spec/maxReplicas
+      value: 50
+    - op: replace
+      path: /spec/metrics/0/resource/target/averageUtilization
+      value: 60
+
+- target:
+    kind: Ingress
+    name: fanet-api
+  patch: |-
+    - op: replace
+      path: /spec/rules/0/host
+      value: "api.flybeeper.com"
+    - op: add
+      path: /metadata/annotations/nginx.ingress.kubernetes.io~1rate-limit
+      value: "2000"
+    - op: add
+      path: /metadata/annotations/nginx.ingress.kubernetes.io~1rate-limit-connections
+      value: "200"
+
+# Production secrets (внешние сервисы)
+patchesStrategicMerge:
+- secrets-production.yaml
+
+# Production environment vars
+replacements:
+- source:
+    kind: ConfigMap
+    name: fanet-config-prod
+    fieldPath: data.ENVIRONMENT
+  targets:
+  - select:
+      kind: Deployment
+      name: fanet-api
+    fieldPaths:
+    - spec.template.spec.containers.[name=fanet-api].env.[name=ENVIRONMENT].value

@@ -1,0 +1,129 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fanet-api-pdb
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: pdb
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "PodDisruptionBudget для FANET API - обеспечение высокой доступности во время обновлений"
+spec:
+  # Минимум 2 пода должны быть доступны всегда
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fanet-backend
+      app.kubernetes.io/component: api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fanet-redis-pdb
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: pdb
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "PodDisruptionBudget для Redis кластера - защита от одновременного недоступности"
+spec:
+  # Максимум 1 под Redis может быть недоступен одновременно
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fanet-disruption-config
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: disruption-config
+    app.kubernetes.io/part-of: flybeeper-platform
+data:
+  disruption-policy.yaml: |
+    # Политики нарушения для различных сценариев
+    
+    # Production environment
+    production:
+      minAvailable: 3  # Минимум 3 пода для production
+      maxUnavailable: 1
+      
+    # Staging environment  
+    staging:
+      minAvailable: 1  # Минимум 1 под для staging
+      maxUnavailable: 50%
+      
+    # Development environment
+    development:
+      minAvailable: 1
+      maxUnavailable: 100%  # Может быть полностью недоступен
+      
+    # Особенности для FANET workload
+    fanet_specific:
+      websocket_considerations: |
+        При использовании WebSocket соединений важно учитывать:
+        1. Graceful shutdown должен занимать не более 60 секунд
+        2. Клиенты должны автоматически переподключаться
+        3. Состояние сессий не должно теряться
+        
+      real_time_requirements: |
+        Для real-time обновлений:
+        1. Минимальное время недоступности < 5 секунд
+        2. Буферизация сообщений во время переключения
+        3. Синхронизация состояния между подами
+        
+      mqtt_processing: |
+        MQTT обработка:
+        1. Очереди сообщений должны сохраняться
+        2. Acknowledgments не должны теряться
+        3. Порядок сообщений должен поддерживаться
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fanet-maintenance-windows
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: maintenance
+    app.kubernetes.io/part-of: flybeeper-platform
+data:
+  maintenance-schedule.yaml: |
+    # Окна обслуживания для production deployments
+    maintenance_windows:
+      # Основное окно - минимальная активность пользователей
+      primary:
+        time: "02:00-04:00 UTC"
+        days: ["Sunday", "Monday"]
+        description: "Основное окно для обновлений и maintenance"
+        
+      # Экстренное окно - для критических обновлений
+      emergency:
+        time: "anytime"
+        conditions: "security_patches, critical_bugs"
+        description: "Для критических обновлений безопасности"
+        
+      # Планируемые обновления
+      scheduled:
+        time: "01:00-06:00 UTC"
+        days: ["Sunday"]
+        frequency: "monthly"
+        description: "Ежемесячные плановые обновления"
+        
+    # Требования к уведомлениям
+    notifications:
+      advance_notice: "48 hours"
+      channels: ["slack", "email", "pagerduty"]
+      stakeholders: ["dev-team", "ops-team", "product-team"]
+      
+    # Критерии для rollback
+    rollback_triggers:
+      error_rate_threshold: "5%"
+      response_time_threshold: "500ms"
+      websocket_connection_loss: "10%"
+      mqtt_message_loss: "1%"

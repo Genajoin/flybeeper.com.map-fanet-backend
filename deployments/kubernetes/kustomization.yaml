@@ -1,0 +1,96 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: fanet-backend
+  annotations:
+    description: "Kustomization для FANET Backend - управление различными environments"
+
+# Общие ресурсы для всех environments
+resources:
+- namespace.yaml
+- configmap.yaml
+- secret.yaml
+- deployment.yaml
+- service.yaml
+- ingress.yaml
+- hpa.yaml
+- networkpolicy.yaml
+- pdb.yaml
+- redis/statefulset.yaml
+- redis/service.yaml
+- monitoring/servicemonitor.yaml
+
+# Общие лейблы для всех ресурсов
+commonLabels:
+  app.kubernetes.io/name: fanet-backend
+  app.kubernetes.io/part-of: flybeeper-platform
+  app.kubernetes.io/managed-by: kustomize
+
+# Общие аннотации
+commonAnnotations:
+  kustomize.toolkit.fluxcd.io/force: "true"
+  managed-by: "kustomize"
+
+# Namespace для всех ресурсов
+namespace: fanet
+
+# Префикс для имен ресурсов (опционально)
+namePrefix: ""
+
+# Суффикс для имен ресурсов (опционально)  
+nameSuffix: ""
+
+# Образы для замены
+images:
+- name: flybeeper/fanet-api
+  newTag: latest
+
+# ConfigMap генераторы для динамической конфигурации
+configMapGenerator:
+- name: fanet-version-info
+  literals:
+  - version=1.0.0
+  - build-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  - git-commit=$(git rev-parse --short HEAD)
+  - git-branch=$(git rev-parse --abbrev-ref HEAD)
+
+# Secret генераторы (использовать осторожно)
+secretGenerator: []
+
+# Patches для настройки ресурсов
+patches:
+- target:
+    kind: Deployment
+    name: fanet-api
+  patch: |-
+    - op: add
+      path: /spec/template/metadata/labels/version
+      value: "1.0.0"
+    - op: add  
+      path: /spec/template/metadata/annotations/prometheus.io~1scrape
+      value: "true"
+
+# Replicas для различных ресурсов
+replicas:
+- name: fanet-api
+  count: 3
+- name: redis-cluster
+  count: 6
+
+# Vars для подстановки значений
+vars:
+- name: FANET_VERSION
+  objref:
+    kind: ConfigMap
+    name: fanet-version-info
+    apiVersion: v1
+  fieldref:
+    fieldpath: data.version
+- name: FANET_NAMESPACE
+  objref:
+    kind: Namespace
+    name: fanet
+    apiVersion: v1
+  fieldref:
+    fieldpath: metadata.name

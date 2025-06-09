@@ -1,0 +1,267 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fanet-api
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: flybeeper-platform
+    prometheus: kube-prometheus
+  annotations:
+    description: "ServiceMonitor для мониторинга FANET API через Prometheus"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fanet-backend
+      app.kubernetes.io/component: metrics
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    metricRelabelings:
+    # Добавляем лейбл service для идентификации
+    - sourceLabels: [__name__]
+      targetLabel: service
+      replacement: fanet-api
+    # Фильтрация FANET специфичных метрик
+    - sourceLabels: [__name__]
+      regex: '(fanet_|http_|websocket_|mqtt_|redis_|geo_|batch_writer_).*'
+      action: keep
+  namespaceSelector:
+    matchNames:
+    - fanet
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: fanet-redis
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: monitoring
+    app.kubernetes.io/part-of: flybeeper-platform
+    prometheus: kube-prometheus
+  annotations:
+    description: "ServiceMonitor для мониторинга Redis кластера"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: metrics
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    honorLabels: true
+    metricRelabelings:
+    # Добавляем лейбл service
+    - sourceLabels: [__name__]
+      targetLabel: service
+      replacement: redis-cluster
+    # Фильтрация Redis метрик
+    - sourceLabels: [__name__]
+      regex: '(redis_|up|).*'
+      action: keep
+  namespaceSelector:
+    matchNames:
+    - fanet
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: fanet-api-pods
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: pod-monitoring
+    app.kubernetes.io/part-of: flybeeper-platform
+    prometheus: kube-prometheus
+  annotations:
+    description: "PodMonitor для детального мониторинга подов FANET API"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fanet-backend
+      app.kubernetes.io/component: api
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s
+    honorLabels: true
+    metricRelabelings:
+    # Добавляем pod-специфичные лейблы
+    - sourceLabels: [__meta_kubernetes_pod_name]
+      targetLabel: pod_name
+    - sourceLabels: [__meta_kubernetes_pod_node_name]
+      targetLabel: node_name
+    # Фильтрация важных метрик
+    - sourceLabels: [__name__]
+      regex: '(fanet_websocket_connections|fanet_mqtt_messages_rate|fanet_geo_operations_rate|fanet_redis_operations_rate|process_resident_memory_bytes|go_memstats_alloc_bytes|go_goroutines).*'
+      action: keep
+  namespaceSelector:
+    matchNames:
+    - fanet
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fanet-prometheus-rules
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: prometheus-rules
+    app.kubernetes.io/part-of: flybeeper-platform
+data:
+  fanet-rules.yaml: |
+    groups:
+    - name: fanet.api
+      interval: 30s
+      rules:
+      # Производительность API
+      - record: fanet:http_request_rate
+        expr: rate(http_requests_total{service="fanet-api"}[5m])
+        
+      - record: fanet:http_request_duration_p95
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="fanet-api"}[5m]))
+        
+      - record: fanet:http_error_rate
+        expr: rate(http_requests_total{service="fanet-api",status=~"4..|5.."}[5m])
+        
+      # WebSocket метрики
+      - record: fanet:websocket_connections_total
+        expr: sum(websocket_connections_active{service="fanet-api"})
+        
+      - record: fanet:websocket_messages_rate
+        expr: rate(websocket_messages_sent_total{service="fanet-api"}[5m])
+        
+      # MQTT метрики
+      - record: fanet:mqtt_messages_rate
+        expr: rate(mqtt_messages_processed_total{service="fanet-api"}[5m])
+        
+      - record: fanet:mqtt_processing_duration_p95
+        expr: histogram_quantile(0.95, rate(mqtt_processing_duration_seconds_bucket{service="fanet-api"}[5m]))
+        
+      # Redis метрики
+      - record: fanet:redis_operations_rate
+        expr: rate(redis_commands_total{service="fanet-api"}[5m])
+        
+      - record: fanet:redis_geo_operations_rate
+        expr: rate(redis_commands_total{service="fanet-api",command=~"GEOADD|GEORADIUS|GEOPOS"}[5m])
+        
+      # Geo операции
+      - record: fanet:geo_queries_rate
+        expr: rate(geo_queries_total{service="fanet-api"}[5m])
+        
+      - record: fanet:geohash_cache_hit_rate
+        expr: rate(geohash_cache_hits_total{service="fanet-api"}[5m]) / rate(geohash_cache_requests_total{service="fanet-api"}[5m])
+        
+      # Batch writer метрики
+      - record: fanet:batch_writer_queue_size
+        expr: batch_writer_queue_size{service="fanet-api"}
+        
+      - record: fanet:batch_writer_throughput
+        expr: rate(batch_writer_records_written_total{service="fanet-api"}[5m])
+        
+    - name: fanet.redis
+      interval: 30s
+      rules:
+      # Redis кластер здоровье
+      - record: fanet:redis_cluster_state
+        expr: redis_cluster_state{service="redis-cluster"}
+        
+      - record: fanet:redis_memory_usage_ratio
+        expr: redis_memory_used_bytes{service="redis-cluster"} / redis_memory_max_bytes{service="redis-cluster"}
+        
+      - record: fanet:redis_ops_rate
+        expr: rate(redis_commands_processed_total{service="redis-cluster"}[5m])
+        
+      - record: fanet:redis_keyspace_hits_ratio
+        expr: rate(redis_keyspace_hits_total{service="redis-cluster"}[5m]) / (rate(redis_keyspace_hits_total{service="redis-cluster"}[5m]) + rate(redis_keyspace_misses_total{service="redis-cluster"}[5m]))
+        
+    - name: fanet.alerts
+      rules:
+      # Критические алерты
+      - alert: FANETAPIDown
+        expr: up{job="fanet-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: fanet-api
+        annotations:
+          summary: "FANET API is down"
+          description: "FANET API instance {{ $labels.instance }} has been down for more than 1 minute."
+          
+      - alert: FANETHighErrorRate
+        expr: fanet:http_error_rate > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          service: fanet-api
+        annotations:
+          summary: "High error rate in FANET API"
+          description: "FANET API error rate is {{ $value | humanizePercentage }} for more than 5 minutes."
+          
+      - alert: FANETHighLatency
+        expr: fanet:http_request_duration_p95 > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: fanet-api
+        annotations:
+          summary: "High latency in FANET API"
+          description: "FANET API 95th percentile latency is {{ $value }}s for more than 5 minutes."
+          
+      - alert: FANETWebSocketConnectionsHigh
+        expr: fanet:websocket_connections_total > 8000
+        for: 2m
+        labels:
+          severity: warning
+          service: fanet-api
+        annotations:
+          summary: "High number of WebSocket connections"
+          description: "FANET API has {{ $value }} active WebSocket connections, approaching the limit."
+          
+      - alert: FANETMQTTProcessingLag
+        expr: fanet:mqtt_processing_duration_p95 > 1.0
+        for: 3m
+        labels:
+          severity: warning
+          service: fanet-api
+        annotations:
+          summary: "MQTT processing lag detected"
+          description: "FANET API MQTT processing 95th percentile is {{ $value }}s, indicating potential lag."
+          
+      - alert: FANETBatchWriterQueueHigh
+        expr: fanet:batch_writer_queue_size > 5000
+        for: 2m
+        labels:
+          severity: warning
+          service: fanet-api
+        annotations:
+          summary: "Batch writer queue is getting full"
+          description: "FANET API batch writer queue size is {{ $value }}, indicating potential MySQL issues."
+          
+      - alert: FANETRedisDown
+        expr: up{job="redis-cluster"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: redis-cluster
+        annotations:
+          summary: "Redis cluster is down"
+          description: "Redis cluster instance {{ $labels.instance }} has been down for more than 1 minute."
+          
+      - alert: FANETRedisHighMemoryUsage
+        expr: fanet:redis_memory_usage_ratio > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: redis-cluster
+        annotations:
+          summary: "Redis memory usage is high"
+          description: "Redis cluster memory usage is {{ $value | humanizePercentage }} for more than 5 minutes."

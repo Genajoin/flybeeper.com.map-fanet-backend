@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fanet-config
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flybeeper-platform
+data:
+  # Server Configuration
+  SERVER_ADDRESS: ":8090"
+  SERVER_PORT: "8090"
+  SERVER_READ_TIMEOUT: "10s"
+  SERVER_WRITE_TIMEOUT: "10s"
+  SERVER_IDLE_TIMEOUT: "120s"
+  
+  # Environment
+  ENVIRONMENT: "production"
+  APP_ENV: "production"
+  
+  # Redis Configuration
+  REDIS_DB: "0"
+  REDIS_POOL_SIZE: "100"
+  REDIS_MIN_IDLE_CONNS: "10"
+  
+  # MQTT Configuration
+  MQTT_CLIENT_ID: "fanet-api"
+  MQTT_CLEAN_SESSION: "false"
+  MQTT_ORDER_MATTERS: "false"
+  MQTT_TOPIC_PREFIX: "fb/b/+/f/#"
+  
+  # MySQL Configuration
+  MYSQL_MAX_IDLE_CONNS: "10"
+  MYSQL_MAX_OPEN_CONNS: "100"
+  
+  # Auth Configuration
+  AUTH_CACHE_TTL: "5m"
+  
+  # Geo Configuration
+  DEFAULT_RADIUS_KM: "200"
+  MAX_RADIUS_KM: "200"
+  GEOHASH_PRECISION: "5"
+  
+  # Performance Configuration
+  WORKER_POOL_SIZE: "100"
+  MAX_BATCH_SIZE: "100"
+  BATCH_TIMEOUT: "5s"
+  WEBSOCKET_PING_INTERVAL: "30s"
+  WEBSOCKET_PONG_TIMEOUT: "60s"
+  
+  # Monitoring Configuration
+  METRICS_ENABLED: "true"
+  METRICS_PORT: "9090"
+  
+  # Features Configuration
+  ENABLE_MYSQL_FALLBACK: "true"
+  ENABLE_PROFILING: "false"
+  
+  # Logging Configuration
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"

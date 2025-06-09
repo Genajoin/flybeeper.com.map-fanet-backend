@@ -1,0 +1,205 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: service
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "LoadBalancer service для Redis кластера"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: redis
+    protocol: TCP
+  - name: cluster-bus
+    port: 16379
+    targetPort: cluster-bus
+    protocol: TCP
+  sessionAffinity: None
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-headless
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: headless
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "Headless service для service discovery Redis кластера"
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+  ports:
+  - name: redis
+    port: 6379
+    targetPort: redis
+    protocol: TCP
+  - name: cluster-bus
+    port: 16379
+    targetPort: cluster-bus
+    protocol: TCP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cluster-metrics
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9121"
+    prometheus.io/path: "/metrics"
+    description: "Service для мониторинга Redis кластера через Prometheus"
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+  ports:
+  - name: metrics
+    port: 9121
+    targetPort: metrics
+    protocol: TCP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-cluster-config
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: config
+    app.kubernetes.io/part-of: flybeeper-platform
+data:
+  redis.conf: |
+    # Redis Cluster Configuration для FANET Backend
+    
+    # Основные настройки
+    port 6379
+    bind 0.0.0.0
+    protected-mode no
+    
+    # Cluster настройки
+    cluster-enabled yes
+    cluster-config-file nodes.conf
+    cluster-node-timeout 5000
+    cluster-announce-ip ${POD_IP}
+    cluster-announce-port 6379
+    cluster-announce-bus-port 16379
+    
+    # Persistence для надежности
+    appendonly yes
+    appendfsync everysec
+    save 900 1
+    save 300 10
+    save 60 10000
+    
+    # Memory и производительность
+    maxmemory 900mb
+    maxmemory-policy allkeys-lru
+    
+    # Таймауты
+    timeout 300
+    tcp-keepalive 300
+    
+    # Логирование
+    loglevel notice
+    logfile ""
+    
+    # Оптимизации для геопространственных данных
+    hash-max-ziplist-entries 512
+    hash-max-ziplist-value 64
+    zset-max-ziplist-entries 128
+    zset-max-ziplist-value 64
+    
+    # Client connections
+    maxclients 10000
+    
+    # Slow log для диагностики
+    slowlog-log-slower-than 10000
+    slowlog-max-len 128
+  
+  redis-cluster-init.sh: |
+    #!/bin/bash
+    set -e
+    
+    echo "Starting Redis cluster initialization..."
+    
+    # Функция для проверки готовности Redis
+    check_redis_ready() {
+      local host=$1
+      redis-cli -h $host ping > /dev/null 2>&1
+    }
+    
+    # Ждем готовности всех нод
+    NODES=""
+    for i in $(seq 0 5); do
+      NODE="redis-cluster-${i}.redis-cluster-headless.fanet.svc.cluster.local:6379"
+      echo "Waiting for $NODE to be ready..."
+      
+      while ! check_redis_ready "redis-cluster-${i}.redis-cluster-headless.fanet.svc.cluster.local"; do
+        echo "  Still waiting for redis-cluster-${i}..."
+        sleep 5
+      done
+      
+      NODES="$NODES $NODE"
+      echo "  redis-cluster-${i} is ready!"
+    done
+    
+    echo "All Redis nodes are ready. Creating cluster with nodes: $NODES"
+    
+    # Создаем кластер
+    redis-cli --cluster create $NODES \
+      --cluster-replicas 1 \
+      --cluster-yes
+    
+    if [ $? -eq 0 ]; then
+      echo "Redis cluster created successfully!"
+      
+      # Проверяем состояние
+      redis-cli -h redis-cluster-0.redis-cluster-headless.fanet.svc.cluster.local cluster info
+      redis-cli -h redis-cluster-0.redis-cluster-headless.fanet.svc.cluster.local cluster nodes
+      
+      echo "Cluster initialization completed!"
+    else
+      echo "Failed to create Redis cluster"
+      exit 1
+    fi
+  
+  health-check.sh: |
+    #!/bin/bash
+    # Health check script для Redis cluster
+    
+    # Проверяем доступность Redis
+    if ! redis-cli ping > /dev/null 2>&1; then
+      echo "Redis is not responding to ping"
+      exit 1
+    fi
+    
+    # Проверяем состояние кластера
+    if redis-cli cluster info | grep -q "cluster_state:ok"; then
+      echo "Redis cluster is healthy"
+      exit 0
+    else
+      echo "Redis cluster state is not OK"
+      redis-cli cluster info
+      exit 1
+    fi

@@ -1,0 +1,226 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fanet-api-hpa
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: hpa
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "Автомасштабирование FANET API на основе CPU, памяти и WebSocket подключений"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fanet-api
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  # CPU утилизация (целевая 70%)
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  # Memory утилизация (целевая 80%)
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+  # WebSocket подключения на под (максимум 1000)
+  - type: Pods
+    pods:
+      metric:
+        name: websocket_connections_active
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  # HTTP запросы в секунду на под (максимум 500)
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_per_second
+      target:
+        type: AverageValue
+        averageValue: "500"
+  # MQTT сообщения в секунду на под (максимум 1000)
+  - type: Pods
+    pods:
+      metric:
+        name: mqtt_messages_per_second
+      target:
+        type: AverageValue
+        averageValue: "1000"
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      # Быстрое масштабирование вверх при нагрузке
+      - type: Percent
+        value: 100
+        periodSeconds: 30
+      # Ограничение на добавление подов
+      - type: Pods
+        value: 5
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      # Медленное масштабирование вниз для стабильности
+      - type: Percent
+        value: 10
+        periodSeconds: 60
+      # Ограничение на удаление подов
+      - type: Pods
+        value: 2
+        periodSeconds: 120
+      selectPolicy: Min
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: fanet-api-hpa-custom
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: hpa-custom
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "Дополнительный HPA для специфичных метрик FANET (Redis, геопространственные операции)"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: fanet-api
+  minReplicas: 3
+  maxReplicas: 15
+  metrics:
+  # Redis операции в секунду (целевая 5000)
+  - type: Object
+    object:
+      metric:
+        name: redis_ops_per_second
+      target:
+        type: AverageValue
+        averageValue: "5000"
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: fanet-api-metrics
+  # Количество активных geohash регионов (целевая 50)
+  - type: Object
+    object:
+      metric:
+        name: geohash_regions_active
+      target:
+        type: AverageValue
+        averageValue: "50"
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: fanet-api-metrics
+  # Размер очереди batch writer (целевая 1000)
+  - type: Object
+    object:
+      metric:
+        name: batch_writer_queue_size
+      target:
+        type: AverageValue
+        averageValue: "1000"
+      describedObject:
+        apiVersion: v1
+        kind: Service
+        name: fanet-api-metrics
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 120
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 5
+        periodSeconds: 120
+      selectPolicy: Min
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hpa-custom-metrics
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: fanet-backend
+    app.kubernetes.io/component: hpa-config
+    app.kubernetes.io/part-of: flybeeper-platform
+data:
+  custom-metrics.yaml: |
+    # Конфигурация для Prometheus Adapter
+    rules:
+    - seriesQuery: 'websocket_connections_active{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "^websocket_connections_active"
+        as: "websocket_connections_active"
+      metricsQuery: 'avg(websocket_connections_active{namespace="<<.Namespace>>",pod="<<.Pod>>"}) by (pod)'
+        
+    - seriesQuery: 'http_requests_per_second{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "^http_requests_per_second"
+        as: "http_requests_per_second"
+      metricsQuery: 'rate(http_requests_total{namespace="<<.Namespace>>",pod="<<.Pod>>"}[1m])'
+        
+    - seriesQuery: 'mqtt_messages_per_second{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          pod: {resource: "pod"}
+      name:
+        matches: "^mqtt_messages_per_second"
+        as: "mqtt_messages_per_second"
+      metricsQuery: 'rate(mqtt_messages_processed_total{namespace="<<.Namespace>>",pod="<<.Pod>>"}[1m])'
+        
+    - seriesQuery: 'redis_ops_per_second{namespace!="",service!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          service: {resource: "service"}
+      name:
+        matches: "^redis_ops_per_second"
+        as: "redis_ops_per_second"
+      metricsQuery: 'rate(redis_commands_total{namespace="<<.Namespace>>",service="<<.Service>>"}[1m])'
+        
+    - seriesQuery: 'geohash_regions_active{namespace!="",service!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          service: {resource: "service"}
+      name:
+        matches: "^geohash_regions_active"
+        as: "geohash_regions_active"
+      metricsQuery: 'geohash_regions_active{namespace="<<.Namespace>>",service="<<.Service>>"}'
+        
+    - seriesQuery: 'batch_writer_queue_size{namespace!="",service!=""}'
+      resources:
+        overrides:
+          namespace: {resource: "namespace"}
+          service: {resource: "service"}
+      name:
+        matches: "^batch_writer_queue_size"
+        as: "batch_writer_queue_size"
+      metricsQuery: 'batch_writer_queue_size{namespace="<<.Namespace>>",service="<<.Service>>"}'

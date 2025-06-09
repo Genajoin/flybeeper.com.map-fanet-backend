@@ -1,0 +1,266 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-cluster
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: flybeeper-platform
+    app.kubernetes.io/version: "7.0"
+  annotations:
+    description: "Redis Cluster для FANET Backend - геопространственное кеширование и session storage"
+spec:
+  serviceName: redis-cluster-headless
+  replicas: 6
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/component: database
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: database
+        app.kubernetes.io/part-of: flybeeper-platform
+        app.kubernetes.io/version: "7.0"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9121"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: redis
+                app.kubernetes.io/component: database
+            topologyKey: kubernetes.io/hostname
+      initContainers:
+      - name: redis-cluster-init
+        image: redis:7-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Initializing Redis cluster configuration..."
+          
+          # Создаем конфигурационный файл
+          cat > /shared/redis.conf << EOF
+          # Redis Cluster Configuration
+          port 6379
+          cluster-enabled yes
+          cluster-config-file nodes.conf
+          cluster-node-timeout 5000
+          cluster-announce-hostname redis-cluster-\${HOSTNAME##*-}.redis-cluster-headless.fanet.svc.cluster.local
+          appendonly yes
+          appendfsync everysec
+          save 900 1
+          save 300 10
+          save 60 10000
+          
+          # Geo и FANET специфичные настройки
+          maxmemory 1gb
+          maxmemory-policy allkeys-lru
+          timeout 300
+          tcp-keepalive 300
+          
+          # Security
+          requirepass ""
+          protected-mode no
+          
+          # Logging
+          loglevel notice
+          logfile ""
+          
+          # Performance tuning for FANET workload
+          hash-max-ziplist-entries 512
+          hash-max-ziplist-value 64
+          zset-max-ziplist-entries 128
+          zset-max-ziplist-value 64
+          
+          # Geo commands optimization
+          geo-entries-encoding hashtable
+          EOF
+          
+          chown 999:999 /shared/redis.conf
+          chmod 640 /shared/redis.conf
+        volumeMounts:
+        - name: shared-config
+          mountPath: /shared
+        securityContext:
+          runAsUser: 0
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - name: redis
+          containerPort: 6379
+          protocol: TCP
+        - name: cluster-bus
+          containerPort: 16379
+          protocol: TCP
+        command:
+        - redis-server
+        - /etc/redis/redis.conf
+        env:
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+            ephemeral-storage: "1Gi"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+            ephemeral-storage: "2Gi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 999
+          runAsGroup: 999
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        - name: shared-config
+          mountPath: /etc/redis
+        - name: tmp
+          mountPath: /tmp
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      # Redis Exporter для мониторинга
+      - name: redis-exporter
+        image: oliver006/redis_exporter:latest
+        ports:
+        - name: metrics
+          containerPort: 9121
+          protocol: TCP
+        env:
+        - name: REDIS_ADDR
+          value: "redis://localhost:6379"
+        - name: REDIS_EXPORTER_CHECK_KEYS
+          value: "fanet:*,pilots:*,thermals:*,stations:*"
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "10m"
+          limits:
+            memory: "64Mi"
+            cpu: "50m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 59000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: shared-config
+        emptyDir: {}
+      - name: tmp
+        emptyDir:
+          medium: Memory
+          sizeLimit: "100Mi"
+      terminationGracePeriodSeconds: 60
+  volumeClaimTemplates:
+  - metadata:
+      name: redis-data
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: storage
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      storageClassName: "fast-ssd"
+      resources:
+        requests:
+          storage: "10Gi"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: redis-cluster-init-job
+  namespace: fanet
+  labels:
+    app.kubernetes.io/name: redis
+    app.kubernetes.io/component: cluster-init
+    app.kubernetes.io/part-of: flybeeper-platform
+  annotations:
+    description: "Одноразовая job для инициализации Redis кластера"
+spec:
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: redis
+        app.kubernetes.io/component: cluster-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: redis-cluster-init
+        image: redis:7-alpine
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for Redis pods to be ready..."
+          
+          # Ждем готовности всех подов
+          for i in $(seq 0 5); do
+            while ! redis-cli -h redis-cluster-${i}.redis-cluster-headless.fanet.svc.cluster.local ping > /dev/null 2>&1; do
+              echo "Waiting for redis-cluster-${i}..."
+              sleep 5
+            done
+          done
+          
+          echo "All Redis pods are ready. Creating cluster..."
+          
+          # Создаем кластер
+          redis-cli --cluster create \
+            redis-cluster-0.redis-cluster-headless.fanet.svc.cluster.local:6379 \
+            redis-cluster-1.redis-cluster-headless.fanet.svc.cluster.local:6379 \
+            redis-cluster-2.redis-cluster-headless.fanet.svc.cluster.local:6379 \
+            redis-cluster-3.redis-cluster-headless.fanet.svc.cluster.local:6379 \
+            redis-cluster-4.redis-cluster-headless.fanet.svc.cluster.local:6379 \
+            redis-cluster-5.redis-cluster-headless.fanet.svc.cluster.local:6379 \
+            --cluster-replicas 1 --cluster-yes
+          
+          echo "Redis cluster initialized successfully!"
+          
+          # Проверяем состояние кластера
+          redis-cli -h redis-cluster-0.redis-cluster-headless.fanet.svc.cluster.local cluster info
+          redis-cli -h redis-cluster-0.redis-cluster-headless.fanet.svc.cluster.local cluster nodes
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
