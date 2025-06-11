@@ -40,11 +40,12 @@ echo "🔍 Проверка доступности портов..."
 check_port $API_PORT "API" || echo "   Пример: API_PORT=8091 ./deploy-simple.sh"
 check_port $REDIS_PORT "REDIS" || echo "   Пример: REDIS_PORT=6380 ./deploy-simple.sh"
 check_port $MQTT_PORT "MQTT" || echo "   Пример: MQTT_PORT=1884 ./deploy-simple.sh"
+check_port $MQTT_WS_PORT "MQTT_WS" || echo "   Пример: MQTT_WS_PORT=9002 ./deploy-simple.sh"
 check_port $MYSQL_PORT "MYSQL" || echo "   Пример: MYSQL_PORT=3307 ./deploy-simple.sh"
 
 echo ""
 echo "💡 Для изменения всех портов одновременно:"
-echo "   API_PORT=8091 REDIS_PORT=6380 MQTT_PORT=1884 MYSQL_PORT=3307 ./deploy-simple.sh"
+echo "   API_PORT=8091 REDIS_PORT=6380 MQTT_PORT=1884 MQTT_WS_PORT=9002 MYSQL_PORT=3307 ./deploy-simple.sh"
 echo ""
 read -p "Продолжить с текущими портами? (y/N): " -n 1 -r
 echo
