@@ -68,6 +68,11 @@ docker-build:
 	@echo "Building Docker image..."
 	@docker build -t $(DOCKER_IMAGE):$(VERSION) -t $(DOCKER_IMAGE):latest .
 
+# Simple deployment script
+deploy-simple:
+	@echo "Running simple deployment..."
+	@./deploy-simple.sh
+
 docker-run:
 	@docker run -p 8080:8080 --rm $(DOCKER_IMAGE):latest
 
@@ -133,6 +138,7 @@ help:
 	@echo "  make lint     - Lint the code"
 	@echo "  make clean    - Clean build artifacts"
 	@echo "  make docker-build - Build Docker image"
+	@echo "  make deploy-simple - Simple deployment without Go/protoc"
 	@echo "  make dev-env  - Start development environment"
 	@echo "  make proto    - Generate protobuf files"
 	@echo "  make mqtt-test - Start MQTT test publisher"

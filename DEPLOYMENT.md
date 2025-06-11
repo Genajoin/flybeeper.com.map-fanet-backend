@@ -28,18 +28,46 @@ FANET Backend - высокопроизводительный Go сервис д�
 
 ## 🚀 Способы развертывания
 
+### 0. 🚀 Быстрое развертывание (РЕКОМЕНДУЕТСЯ)
+
+**Для развертывания без установки Go и protoc:**
+
+```bash
+# Клонирование репозитория
+git clone git@github.com:Genajoin/flybeeper.com.map-fanet-backend.git
+cd flybeeper.com.map-fanet-backend
+
+# Одна команда - полное развертывание
+./deploy-simple.sh
+
+# Проверка
+curl http://localhost:8090/health
+```
+
+**Что включает скрипт:**
+- ✅ Автоматическая сборка Docker образа с protobuf генерацией
+- ✅ Запуск всех необходимых сервисов (Redis, MQTT, MySQL)
+- ✅ Настройка сети между контейнерами
+- ✅ Проверка здоровья всех сервисов
+- ✅ Готовые команды для тестирования
+
 ### 1. 📦 Docker Compose (Разработка)
 
 Быстрый старт для локальной разработки:
 
 ```bash
 # Клонирование и подготовка
-git clone <repository>
+git clone git@github.com:Genajoin/flybeeper.com.map-fanet-backend.git
 cd flybeeper.com.map-fanet-backend
-make deps && make proto
 
-# Запуск полного стека
+# ВАРИАНТ 1: С предустановленным Go и protoc
+make deps && make proto  # Требует: go, protoc
 make dev-env && make dev
+
+# ВАРИАНТ 2: Только Docker (без Go/protoc)
+make dev-env  # Запуск Redis, MQTT, MySQL
+make docker-build  # Автоматически генерирует protobuf
+docker run -p 8090:8090 --network host flybeeper/fanet-api:latest
 
 # Проверка
 curl http://localhost:8090/health
@@ -78,7 +106,11 @@ kubectl apply -k deployments/kubernetes/overlays/production/
 Простое развертывание в single container:
 
 ```bash
-# Сборка образа
+# Клонирование репозитория
+git clone git@github.com:Genajoin/flybeeper.com.map-fanet-backend.git
+cd flybeeper.com.map-fanet-backend
+
+# Сборка образа (включает автоматическую генерацию protobuf)
 make docker-build
 
 # Запуск с external services
@@ -89,6 +121,8 @@ docker run -d \
   -e AUTH_ENDPOINT="https://api.flybeeper.com/api/v4/user" \
   flybeeper/fanet-api:latest
 ```
+
+**⚠️ Важно**: Dockerfile теперь автоматически генерирует protobuf файлы во время сборки. Больше не требуется предустановка Go или protoc на хост-системе.
 
 ## 🔧 Конфигурация
 

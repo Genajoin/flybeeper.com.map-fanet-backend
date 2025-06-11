@@ -1,8 +1,8 @@
 # Build stage
 FROM golang:1.23-alpine AS builder
 
-# Install dependencies
-RUN apk add --no-cache git ca-certificates
+# Install dependencies including protobuf compiler
+RUN apk add --no-cache git ca-certificates protobuf protobuf-dev
 
 # Set working directory
 WORKDIR /build
@@ -13,8 +13,19 @@ COPY go.mod go.sum ./
 # Download dependencies
 RUN go mod download
 
+# Install protobuf Go plugins
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
 # Copy source code
 COPY . .
+
+# Generate protobuf files
+RUN mkdir -p pkg/pb && \
+    protoc --go_out=pkg/pb --go_opt=paths=source_relative \
+    --go-grpc_out=pkg/pb --go-grpc_opt=paths=source_relative \
+    -I ai-spec/api \
+    ai-spec/api/fanet.proto
 
 # Build the binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
