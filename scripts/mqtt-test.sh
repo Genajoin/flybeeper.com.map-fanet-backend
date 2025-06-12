@@ -20,7 +20,7 @@ RATE="2s"
 MAX_MESSAGES="0"
 CLIENT_ID="fanet-test-publisher"
 LAT="46.0"
-LON="8.0"
+LON="13.0"
 SPEED="50.0"
 
 # Путь к исполняемому файлу

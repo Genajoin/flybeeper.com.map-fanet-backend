@@ -329,27 +329,29 @@ func convertFANETToStation(msg *mqtt.FANETMessage) *models.Station {
 		return nil
 	}
 
-	weatherData, ok := serviceData.Data.(*mqtt.WeatherData)
-	if !ok {
-		return nil
-	}
-
-	return &models.Station{
+	// Создаем базовую станцию с координатами из ServiceData
+	station := &models.Station{
 		ID:   msg.DeviceID,
 		Name: "", // Имя приходит в отдельном сообщении Type 2
 		Position: &models.GeoPoint{
-			Latitude:  0, // Координаты станции не в FANET Weather
-			Longitude: 0, // Координаты станции не в FANET Weather
+			Latitude:  serviceData.Latitude,  // Координаты станции из FANET Type 4
+			Longitude: serviceData.Longitude, // Координаты станции из FANET Type 4
 		},
-		Temperature:   weatherData.Temperature,
-		WindSpeed:     weatherData.WindSpeed,
-		WindDirection: weatherData.WindDirection,
-		WindGusts:     0, // Нет в FANET Weather
-		Humidity:      weatherData.Humidity,
-		Pressure:      weatherData.Pressure,
-		Battery:       100, // Нет в FANET Weather
-		LastUpdate:    msg.Timestamp,
+		LastUpdate: msg.Timestamp,
 	}
+
+	// Если есть погодные данные, добавляем их
+	if weatherData, ok := serviceData.Data.(*mqtt.WeatherData); ok {
+		station.Temperature = int8(weatherData.Temperature)
+		station.WindSpeed = uint8(weatherData.WindSpeed)
+		station.WindDirection = weatherData.WindDirection
+		station.WindGusts = uint8(weatherData.WindGusts)
+		station.Humidity = weatherData.Humidity
+		station.Pressure = uint16(weatherData.Pressure)
+		station.Battery = weatherData.Battery
+	}
+
+	return station
 }
 
 // NameUpdate структура для обновления имени пилота

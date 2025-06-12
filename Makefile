@@ -83,10 +83,10 @@ docker-push:
 
 # Development environment
 dev-env:
-	@docker-compose -f deployments/docker/docker-compose.yml up -d
+	@docker compose -f deployments/docker/docker-compose.yml up -d
 
 dev-env-down:
-	@docker-compose -f deployments/docker/docker-compose.yml down
+	@docker compose -f deployments/docker/docker-compose.yml down
 
 # Database migrations
 migrate-up:

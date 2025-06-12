@@ -26,6 +26,7 @@ type Repository interface {
 	// Операции с метеостанциями
 	SaveStation(ctx context.Context, station *models.Station) error
 	GetStationsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Station, error)
+	GetAllStations(ctx context.Context) ([]*models.Station, error)
 
 	// Статистика
 	GetStats(ctx context.Context) (map[string]interface{}, error)

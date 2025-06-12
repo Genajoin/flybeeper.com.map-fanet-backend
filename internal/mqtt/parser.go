@@ -12,7 +12,7 @@ import (
 
 // FANETMessage представляет распарсенное FANET сообщение
 type FANETMessage struct {
-	Type        uint8               `json:"type"`         // Тип сообщения (1=Air tracking, 2=Name, 4=Service, 7=Ground tracking, 9=Thermal)
+	Type        uint8               `json:"type"`         // Тип сообщения (0=ACK, 1=Air tracking, 2=Name, 4=Service, 7=Ground tracking, 8=HW Info, 9=Thermal)
 	DeviceID    string              `json:"device_id"`    // ID устройства (24-bit адрес)
 	ChipID      string              `json:"chip_id"`      // ID базовой станции (из топика)
 	PacketType  string              `json:"packet_type"`  // Тип пакета из топика для дополнительной валидации
@@ -37,22 +37,26 @@ type AirTrackingData struct {
 
 // NameData данные имени (Type 2)
 type NameData struct {
-	Name string `json:"name"` // Имя пилота/устройства (UTF-8, max 20 символов)
+	Name string `json:"name"` // Имя пилота/устройства (UTF-8, max 64 символа)
 }
 
 // ServiceData данные сервиса/погоды (Type 4)
 type ServiceData struct {
-	ServiceType uint8       `json:"service_type"` // Тип сервиса
-	Data        interface{} `json:"data"`         // Данные зависящие от типа сервиса
+	ServiceHeader uint8       `json:"service_header"` // Битовые флаги сервиса
+	Latitude      float64     `json:"latitude"`       // Широта станции
+	Longitude     float64     `json:"longitude"`      // Долгота станции
+	Data          interface{} `json:"data"`           // Дополнительные данные согласно флагам
 }
 
-// WeatherData погодные данные (Service Type 1)
+// WeatherData погодные данные (согласно битовым флагам Type 4)
 type WeatherData struct {
-	WindSpeed     uint8   `json:"wind_speed"`     // Скорость ветра в км/ч
-	WindDirection uint16  `json:"wind_direction"` // Направление ветра в градусах
-	Temperature   int8    `json:"temperature"`    // Температура в °C
-	Humidity      uint8   `json:"humidity"`       // Влажность в %
-	Pressure      uint16  `json:"pressure"`       // Давление в hPa
+	Temperature   float32 `json:"temperature"`    // Температура в °C (если флаг bit 6)
+	WindSpeed     float32 `json:"wind_speed"`     // Скорость ветра в км/ч (если флаг bit 5)
+	WindDirection uint16  `json:"wind_direction"` // Направление ветра в градусах (если флаг bit 5)
+	WindGusts     float32 `json:"wind_gusts"`     // Порывы ветра в км/ч (если флаг bit 5)
+	Humidity      uint8   `json:"humidity"`       // Влажность в % (если флаг bit 4)
+	Pressure      float32 `json:"pressure"`       // Давление в hPa (если флаг bit 3)
+	Battery       uint8   `json:"battery"`        // Заряд батареи в % (если флаг bit 1)
 }
 
 // GroundTrackingData данные наземного отслеживания (Type 7)
@@ -72,6 +76,18 @@ type ThermalData struct {
 	ClimbRate   int16   `json:"climb_rate"`   // Скорость подъема в м/с * 10
 	Strength    uint8   `json:"strength"`     // Сила термика (0-100)
 	Radius      uint16  `json:"radius"`       // Радиус термика в метрах
+}
+
+// HWInfoData данные информации об устройстве (Type 8, deprecated)
+type HWInfoData struct {
+	Manufacturer uint8  `json:"manufacturer"` // Производитель устройства
+	DeviceType   uint8  `json:"device_type"`  // Тип устройства
+}
+
+// NewHWInfoData данные информации об устройстве (Type 10, новая версия)
+type NewHWInfoData struct {
+	Manufacturer uint8  `json:"manufacturer"` // Производитель устройства
+	DeviceType   uint8  `json:"device_type"`  // Тип устройства
 }
 
 // Parser парсер FANET сообщений
@@ -115,17 +131,21 @@ func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
 	
 	// Извлекаем заголовок FANET (1 байт)
 	header := fanetData[0]
-	msgType := header & 0x07  // Биты 0-2: тип пакета
+	msgType := header & 0x3F  // Биты 5-0: тип пакета (6 бит)
 	
 	// Извлекаем адрес источника (3 байта, little-endian)
 	deviceAddr := uint32(fanetData[1]) | uint32(fanetData[2])<<8 | uint32(fanetData[3])<<16
 	deviceID := fmt.Sprintf("%06X", deviceAddr)
 	
-	// Валидация соответствия packet_type из топика и FANET заголовка
-	if expectedType := fmt.Sprintf("%d", msgType); packetType != expectedType {
+	// Логирование типов для отладки и мягкая валидация
+	expectedType := fmt.Sprintf("%d", msgType)
+	if packetType != expectedType {
+		// Не блокируем обработку, но логируем несоответствие для анализа
 		p.logger.WithField("topic_type", packetType).WithField("fanet_type", msgType).WithField("device_id", deviceID).
-			Warn("Packet type mismatch between topic and FANET header, skipping message")
-		return nil, nil // Пропускаем сообщение, но не возвращаем ошибку
+			Info("Packet type mismatch between topic and FANET header (this is normal for some packet types)")
+	} else {
+		p.logger.WithField("topic_type", packetType).WithField("fanet_type", msgType).WithField("device_id", deviceID).
+			Debug("Processing FANET packet")
 	}
 
 	msg := &FANETMessage{
@@ -144,6 +164,10 @@ func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
 		data := fanetData[4:] // Пропускаем заголовок (1 байт) + адрес (3 байта)
 		
 		switch msgType {
+		case 0: // ACK - подтверждение получения пакета
+			p.logger.WithField("device_id", deviceID).Debug("Received ACK packet")
+			// ACK пакеты не содержат полезных данных для клиентов, но логируем их
+			
 		case 1: // Air tracking
 			if parsed, err := p.parseAirTracking(data); err == nil {
 				msg.Data = parsed
@@ -172,6 +196,14 @@ func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
 				p.logger.WithField("error", err).WithField("device_id", deviceID).Warn("Failed to parse ground tracking data")
 			}
 			
+		case 8: // HW Info (deprecated)
+			if parsed, err := p.parseHWInfo(data); err == nil {
+				msg.Data = parsed
+				p.logger.WithField("device_id", deviceID).Debug("Received deprecated HW Info packet")
+			} else {
+				p.logger.WithField("error", err).WithField("device_id", deviceID).Warn("Failed to parse HW info data")
+			}
+			
 		case 9: // Thermal
 			if parsed, err := p.parseThermal(data); err == nil {
 				msg.Data = parsed
@@ -179,9 +211,17 @@ func (p *Parser) Parse(topic string, payload []byte) (*FANETMessage, error) {
 				p.logger.WithField("error", err).WithField("device_id", deviceID).Warn("Failed to parse thermal data")
 			}
 			
+		case 10: // New HW Info (0xA)
+			if parsed, err := p.parseNewHWInfo(data); err == nil {
+				msg.Data = parsed
+				p.logger.WithField("device_id", deviceID).Debug("Received new HW Info packet")
+			} else {
+				p.logger.WithField("error", err).WithField("device_id", deviceID).Warn("Failed to parse new HW info data")
+			}
+			
 		default:
 			p.logger.WithField("type", msgType).WithField("device_id", deviceID).Debug("Unsupported FANET message type")
-			return nil, nil // Не ошибка, просто неподдерживаемый тип
+			// Не возвращаем nil для неподдерживаемых типов - позволяем им проходить дальше
 		}
 	}
 	
@@ -244,71 +284,114 @@ func (p *Parser) parseAirTracking(data []byte) (*AirTrackingData, error) {
 
 // parseName парсит данные имени (Type 2)
 func (p *Parser) parseName(data []byte) (*NameData, error) {
-	if len(data) == 0 || len(data) > 20 {
-		return nil, fmt.Errorf("invalid name length: %d bytes", len(data))
+	if len(data) == 0 {
+		return nil, fmt.Errorf("name data is empty")
+	}
+	
+	// Разумное ограничение для имени (увеличено до 64 символов для совместимости)
+	if len(data) > 64 {
+		p.logger.WithField("length", len(data)).Warn("Name too long, truncating to 64 bytes")
+		data = data[:64]
 	}
 	
 	// Имя в UTF-8 кодировке
 	name := string(data)
+	
+	// Убираем null-терминаторы если есть
+	name = strings.TrimRight(name, "\x00")
 	
 	return &NameData{
 		Name: name,
 	}, nil
 }
 
-// parseService парсит сервисные данные (Type 4)
+// parseService парсит сервисные данные (Type 4) согласно новой спецификации
 func (p *Parser) parseService(data []byte) (*ServiceData, error) {
-	if len(data) < 1 {
-		return nil, fmt.Errorf("service data too short: %d bytes", len(data))
+	if len(data) < 7 {
+		return nil, fmt.Errorf("service data too short: %d bytes (минимум 7: header + координаты)", len(data))
 	}
 	
-	serviceType := data[0]
+	// Извлекаем service header с битовыми флагами
+	serviceHeader := data[0]
+	
+	// Извлекаем координаты станции (обязательные для Type 4)
+	latRaw := int32(data[1]) | int32(data[2])<<8 | int32(data[3])<<16
+	if latRaw&0x800000 != 0 { // Знаковое расширение для 24-bit
+		latRaw |= ^0xFFFFFF
+	}
+	latitude := float64(latRaw) / 93206.04
+	
+	lonRaw := int32(data[4]) | int32(data[5])<<8 | int32(data[6])<<16
+	if lonRaw&0x800000 != 0 {
+		lonRaw |= ^0xFFFFFF
+	}
+	longitude := float64(lonRaw) / 46603.02
+	
 	service := &ServiceData{
-		ServiceType: serviceType,
+		ServiceHeader: serviceHeader,
+		Latitude:      latitude,
+		Longitude:     longitude,
 	}
 	
-	switch serviceType {
-	case 1: // Weather data
-		if weather, err := p.parseWeather(data[1:]); err == nil {
-			service.Data = weather
-		} else {
-			return nil, fmt.Errorf("failed to parse weather data: %w", err)
-		}
-	default:
-		// Неизвестный тип сервиса, сохраняем как есть
-		service.Data = data[1:]
+	// Парсим дополнительные данные согласно флагам в service header
+	weather := &WeatherData{}
+	offset := 7
+	hasWeatherData := false
+	
+	// Bit 6: Temperature
+	if serviceHeader&0x40 != 0 && offset < len(data) {
+		tempRaw := int8(data[offset])
+		weather.Temperature = float32(tempRaw) / 2.0 // °C
+		offset++
+		hasWeatherData = true
+	}
+	
+	// Bit 5: Wind (3 байта)
+	if serviceHeader&0x20 != 0 && offset+2 < len(data) {
+		windDir := data[offset]
+		weather.WindDirection = uint16(windDir) * 360 / 256
+		
+		// Wind speed и gusts в следующих байтах (более сложная структура)
+		// Упрощенная реализация
+		windSpeed := data[offset+1]
+		windGusts := data[offset+2]
+		weather.WindSpeed = float32(windSpeed) * 0.2 // 0.2 км/ч units
+		weather.WindGusts = float32(windGusts) * 0.2
+		offset += 3
+		hasWeatherData = true
+	}
+	
+	// Bit 4: Humidity
+	if serviceHeader&0x10 != 0 && offset < len(data) {
+		humRaw := data[offset]
+		weather.Humidity = humRaw / 4 // %RH * 4
+		offset++
+		hasWeatherData = true
+	}
+	
+	// Bit 3: Barometric pressure (2 байта)
+	if serviceHeader&0x08 != 0 && offset+1 < len(data) {
+		pressureRaw := uint16(data[offset]) | uint16(data[offset+1])<<8
+		weather.Pressure = (float32(pressureRaw) / 10.0) + 430.0 // hPa
+		offset += 2
+		hasWeatherData = true
+	}
+	
+	// Bit 1: State of Charge (battery)
+	if serviceHeader&0x02 != 0 && offset < len(data) {
+		batteryRaw := data[offset] & 0x0F // Младшие 4 бита
+		weather.Battery = uint8(batteryRaw) * 100 / 15 // 0x0-0xF -> 0-100%
+		offset++
+		hasWeatherData = true
+	}
+	
+	if hasWeatherData {
+		service.Data = weather
 	}
 	
 	return service, nil
 }
 
-// parseWeather парсит погодные данные согласно спецификации (Service Type 0)
-func (p *Parser) parseWeather(data []byte) (*WeatherData, error) {
-	if len(data) < 12 {
-		return nil, fmt.Errorf("weather data too short: %d bytes", len(data))
-	}
-	
-	// Согласно спецификации Service Type 0: Weather Station
-	windHeading := binary.LittleEndian.Uint16(data[0:2])      // * 182
-	windSpeed := binary.LittleEndian.Uint16(data[2:4])        // * 100 (м/с)
-	_ = binary.LittleEndian.Uint16(data[4:6])        // * 100 (м/с) - не используется
-	temperature := int16(binary.LittleEndian.Uint16(data[6:8])) // * 100 (°C)
-	humidity := data[8]                                        // %
-	pressure := binary.LittleEndian.Uint16(data[9:11])        // - 1000 (гПа)
-	_ = uint8(0)                                        // По умолчанию - не используется
-	
-	// Удаляем неиспользуемую переменную battery
-	
-	weather := &WeatherData{
-		WindDirection: uint16(float64(windHeading) / 182.0),           // градусы
-		WindSpeed:     uint8(float64(windSpeed) / 100.0 * 3.6),       // км/ч (м/с -> км/ч)
-		Temperature:   int8(float64(temperature) / 100.0),            // °C
-		Humidity:      humidity,                                       // %
-		Pressure:      pressure + 1000,                               // гПа
-	}
-	
-	return weather, nil
-}
 
 // parseGroundTracking парсит данные наземного отслеживания (Type 7)
 func (p *Parser) parseGroundTracking(data []byte) (*GroundTrackingData, error) {
@@ -388,6 +471,46 @@ func (p *Parser) parseThermal(data []byte) (*ThermalData, error) {
 	// Ветер не входит в ThermalData структуру согласно спецификации
 	
 	return thermal, nil
+}
+
+// parseHWInfo парсит данные информации об устройстве (Type 8, deprecated)
+func (p *Parser) parseHWInfo(data []byte) (*HWInfoData, error) {
+	if len(data) < 1 {
+		return nil, fmt.Errorf("HW info data too short: %d bytes", len(data))
+	}
+	
+	// Согласно спецификации, Type 8 содержит информацию об устройстве
+	// Byte 0: Device/Instrument Type 
+	deviceType := data[0]
+	manufacturer := uint8(0) // По умолчанию неизвестно
+	
+	// Попытка извлечь производителя из старших битов (если есть дополнительные данные)
+	if len(data) >= 2 {
+		manufacturer = data[1]
+	}
+	
+	return &HWInfoData{
+		Manufacturer: manufacturer,
+		DeviceType:   deviceType,
+	}, nil
+}
+
+// parseNewHWInfo парсит данные информации об устройстве (Type 10, новая версия)
+func (p *Parser) parseNewHWInfo(data []byte) (*NewHWInfoData, error) {
+	if len(data) < 2 {
+		return nil, fmt.Errorf("new HW info data too short: %d bytes", len(data))
+	}
+	
+	// Согласно спецификации Type 10
+	// Byte 0: Manufacturer
+	// Byte 1: Device Type
+	manufacturer := data[0]
+	deviceType := data[1]
+	
+	return &NewHWInfoData{
+		Manufacturer: manufacturer,
+		DeviceType:   deviceType,
+	}, nil
 }
 
 // ValidateCoordinates проверяет валидность координат

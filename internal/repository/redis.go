@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -126,12 +127,45 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	start := time.Now()
 	pipe := r.client.Pipeline()
 
-	// Сохраняем в геопространственный индекс
-	pipe.GeoAdd(ctx, PilotsGeoKey, &redis.GeoLocation{
-		Name:      fmt.Sprintf("pilot:%s", pilot.DeviceID),
-		Latitude:  pilot.Position.Latitude,
-		Longitude: pilot.Position.Longitude,
-	})
+	// Сохраняем в геопространственный индекс только если координаты валидны
+	// Redis GEO ограничения: lat [-85.05112878, 85.05112878], lon [-180, 180]
+	if pilot.Position != nil && 
+		pilot.Position.Latitude != 0 && pilot.Position.Longitude != 0 &&
+		pilot.Position.Latitude >= -85.05112878 && pilot.Position.Latitude <= 85.05112878 &&
+		pilot.Position.Longitude >= -180 && pilot.Position.Longitude <= 180 &&
+		!math.IsNaN(pilot.Position.Latitude) && !math.IsNaN(pilot.Position.Longitude) &&
+		!math.IsInf(pilot.Position.Latitude, 0) && !math.IsInf(pilot.Position.Longitude, 0) {
+		
+		pipe.GeoAdd(ctx, PilotsGeoKey, &redis.GeoLocation{
+			Name:      fmt.Sprintf("pilot:%s", pilot.DeviceID),
+			Latitude:  pilot.Position.Latitude,
+			Longitude: pilot.Position.Longitude,
+		})
+	} else {
+		// Детальная диагностика проблем с координатами пилота
+		var reason string
+		if pilot.Position == nil {
+			reason = "position is nil"
+		} else if pilot.Position.Latitude == 0 && pilot.Position.Longitude == 0 {
+			reason = "coordinates are zero"
+		} else if pilot.Position.Latitude < -85.05112878 || pilot.Position.Latitude > 85.05112878 {
+			reason = fmt.Sprintf("latitude out of Redis GEO range [-85.05112878, 85.05112878]: %f", pilot.Position.Latitude)
+		} else if pilot.Position.Longitude < -180 || pilot.Position.Longitude > 180 {
+			reason = fmt.Sprintf("longitude out of range [-180, 180]: %f", pilot.Position.Longitude)
+		} else if math.IsNaN(pilot.Position.Latitude) || math.IsNaN(pilot.Position.Longitude) {
+			reason = "coordinates contain NaN values"
+		} else if math.IsInf(pilot.Position.Latitude, 0) || math.IsInf(pilot.Position.Longitude, 0) {
+			reason = "coordinates contain Inf values"
+		} else {
+			reason = "unknown validation failure"
+		}
+		
+		r.logger.WithField("device_id", pilot.DeviceID).
+			WithField("lat", pilot.Position.Latitude).
+			WithField("lon", pilot.Position.Longitude).
+			WithField("reason", reason).
+			Warn("Skipping GEO indexing for pilot with invalid coordinates")
+	}
 
 	// Сохраняем детальные данные в HSET согласно спецификации
 	pilotKey := PilotPrefix + pilot.DeviceID
@@ -328,12 +362,42 @@ func (r *RedisRepository) SaveThermal(ctx context.Context, thermal *models.Therm
 	start := time.Now()
 	pipe := r.client.Pipeline()
 
-	// Сохраняем в геопространственный индекс
-	pipe.GeoAdd(ctx, ThermalsGeoKey, &redis.GeoLocation{
-		Name:      thermal.ID,
-		Latitude:  thermal.Center.Latitude,
-		Longitude: thermal.Center.Longitude,
-	})
+	// Сохраняем в геопространственный индекс только если координаты валидны
+	// Redis GEO ограничения: lat [-85.05112878, 85.05112878], lon [-180, 180]
+	if thermal.Center.Latitude != 0 && thermal.Center.Longitude != 0 &&
+		thermal.Center.Latitude >= -85.05112878 && thermal.Center.Latitude <= 85.05112878 &&
+		thermal.Center.Longitude >= -180 && thermal.Center.Longitude <= 180 &&
+		!math.IsNaN(thermal.Center.Latitude) && !math.IsNaN(thermal.Center.Longitude) &&
+		!math.IsInf(thermal.Center.Latitude, 0) && !math.IsInf(thermal.Center.Longitude, 0) {
+		
+		pipe.GeoAdd(ctx, ThermalsGeoKey, &redis.GeoLocation{
+			Name:      thermal.ID,
+			Latitude:  thermal.Center.Latitude,
+			Longitude: thermal.Center.Longitude,
+		})
+	} else {
+		// Детальная диагностика проблем с координатами термика
+		var reason string
+		if thermal.Center.Latitude == 0 && thermal.Center.Longitude == 0 {
+			reason = "coordinates are zero"
+		} else if thermal.Center.Latitude < -85.05112878 || thermal.Center.Latitude > 85.05112878 {
+			reason = fmt.Sprintf("latitude out of Redis GEO range [-85.05112878, 85.05112878]: %f", thermal.Center.Latitude)
+		} else if thermal.Center.Longitude < -180 || thermal.Center.Longitude > 180 {
+			reason = fmt.Sprintf("longitude out of range [-180, 180]: %f", thermal.Center.Longitude)
+		} else if math.IsNaN(thermal.Center.Latitude) || math.IsNaN(thermal.Center.Longitude) {
+			reason = "coordinates contain NaN values"
+		} else if math.IsInf(thermal.Center.Latitude, 0) || math.IsInf(thermal.Center.Longitude, 0) {
+			reason = "coordinates contain Inf values"
+		} else {
+			reason = "unknown validation failure"
+		}
+		
+		r.logger.WithField("thermal_id", thermal.ID).
+			WithField("lat", thermal.Center.Latitude).
+			WithField("lon", thermal.Center.Longitude).
+			WithField("reason", reason).
+			Warn("Skipping GEO indexing for thermal with invalid coordinates")
+	}
 
 	// Сохраняем детальные данные
 	thermalKey := ThermalPrefix + thermal.ID
@@ -434,11 +498,46 @@ func (r *RedisRepository) SaveStation(ctx context.Context, station *models.Stati
 
 	pipe := r.client.Pipeline()
 
-	pipe.GeoAdd(ctx, StationsGeoKey, &redis.GeoLocation{
-		Name:      station.ID,
-		Latitude:  station.Position.Latitude,
-		Longitude: station.Position.Longitude,
-	})
+	// Добавляем в GEO индекс только если координаты валидны
+	// Redis GEO ограничения: lat [-85.05112878, 85.05112878], lon [-180, 180]
+	if station.Position != nil && 
+		station.Position.Latitude != 0 && station.Position.Longitude != 0 &&
+		station.Position.Latitude >= -85.05112878 && station.Position.Latitude <= 85.05112878 &&
+		station.Position.Longitude >= -180 && station.Position.Longitude <= 180 &&
+		!math.IsNaN(station.Position.Latitude) && !math.IsNaN(station.Position.Longitude) &&
+		!math.IsInf(station.Position.Latitude, 0) && !math.IsInf(station.Position.Longitude, 0) {
+		
+		pipe.GeoAdd(ctx, StationsGeoKey, &redis.GeoLocation{
+			Name:      station.ID,
+			Latitude:  station.Position.Latitude,
+			Longitude: station.Position.Longitude,
+		})
+		pipe.Expire(ctx, StationsGeoKey, StationTTL)
+	} else {
+		// Детальная диагностика проблем с координатами
+		var reason string
+		if station.Position == nil {
+			reason = "position is nil"
+		} else if station.Position.Latitude == 0 && station.Position.Longitude == 0 {
+			reason = "coordinates are zero"
+		} else if station.Position.Latitude < -85.05112878 || station.Position.Latitude > 85.05112878 {
+			reason = fmt.Sprintf("latitude out of Redis GEO range [-85.05112878, 85.05112878]: %f", station.Position.Latitude)
+		} else if station.Position.Longitude < -180 || station.Position.Longitude > 180 {
+			reason = fmt.Sprintf("longitude out of range [-180, 180]: %f", station.Position.Longitude)
+		} else if math.IsNaN(station.Position.Latitude) || math.IsNaN(station.Position.Longitude) {
+			reason = "coordinates contain NaN values"
+		} else if math.IsInf(station.Position.Latitude, 0) || math.IsInf(station.Position.Longitude, 0) {
+			reason = "coordinates contain Inf values"
+		} else {
+			reason = "unknown validation failure"
+		}
+		
+		r.logger.WithField("station_id", station.ID).
+			WithField("lat", station.Position.Latitude).
+			WithField("lon", station.Position.Longitude).
+			WithField("reason", reason).
+			Warn("Skipping GEO indexing for station with invalid coordinates")
+	}
 
 	stationKey := StationPrefix + station.ID
 	stationData, err := json.Marshal(station)
@@ -447,7 +546,6 @@ func (r *RedisRepository) SaveStation(ctx context.Context, station *models.Stati
 	}
 
 	pipe.Set(ctx, stationKey, stationData, StationTTL)
-	pipe.Expire(ctx, StationsGeoKey, StationTTL)
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
@@ -780,4 +878,58 @@ func (r *RedisRepository) CleanupExpired(ctx context.Context) error {
 	// Аналогично для термиков и станций...
 	
 	return nil
+}
+
+// GetAllStations возвращает все станции (для snapshot без географической фильтрации)
+func (r *RedisRepository) GetAllStations(ctx context.Context) ([]*models.Station, error) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		metrics.RedisOperationDuration.WithLabelValues("get_all_stations").Observe(duration)
+	}()
+
+	// Получаем все ключи станций
+	pattern := StationPrefix + "*"
+	keys, err := r.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get station keys: %w", err)
+	}
+
+	if len(keys) == 0 {
+		return []*models.Station{}, nil
+	}
+
+	// Получаем данные всех станций batch запросом
+	pipe := r.client.Pipeline()
+	cmds := make([]*redis.StringCmd, len(keys))
+	
+	for i, key := range keys {
+		cmds[i] = pipe.Get(ctx, key)
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("failed to get station details: %w", err)
+	}
+
+	stations := make([]*models.Station, 0, len(keys))
+	for _, cmd := range cmds {
+		if cmd.Err() == redis.Nil {
+			continue
+		}
+		if cmd.Err() != nil {
+			continue // Пропускаем ошибочные записи
+		}
+
+		var station models.Station
+		if err := json.Unmarshal([]byte(cmd.Val()), &station); err != nil {
+			r.logger.WithField("error", err).Warn("Failed to unmarshal station data")
+			continue
+		}
+
+		stations = append(stations, &station)
+	}
+
+	r.logger.WithField("count", len(stations)).Debug("Retrieved all stations")
+	return stations, nil
 }

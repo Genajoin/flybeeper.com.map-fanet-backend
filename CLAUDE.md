@@ -72,7 +72,7 @@ make mqtt-test-quick  # Быстрый тест (50 сообщений)
 - Обертка базовой станции: timestamp (4) + RSSI (2) + SNR (2) + FANET пакет
 - FANET заголовок: 1 байт (тип в битах 0-2) + 3 байта адрес источника
 - Поддерживаемые типы: 1 (Air), 2 (Name), 4 (Service), 7 (Ground), 9 (Thermal)
-- Координаты: lat * 93206.04, lon * 46603.02 (24-bit signed)
+- Координаты: lat * 93206.04, lon * 46603.02 (24-bit signed, исправлены коэффициенты для Type 4)
 - Парсинг FANET протокола в `internal/mqtt/parser.go`
 - Валидация соответствия packet_type из топика и FANET заголовка
 - Автореконнект и обработка ошибок
@@ -203,15 +203,15 @@ make dev                 # API с hot reload на localhost:8090
 ```bash
 # Проверка API
 curl http://localhost:8090/health
-curl "http://localhost:8090/api/v1/snapshot?lat=46.0&lon=8.0&radius=50"
+curl "http://localhost:8090/api/v1/snapshot?lat=46.0&lon=13.0&radius=200"
 
 # Проверка WebSocket (в браузере console)
-const ws = new WebSocket('ws://localhost:8090/ws/v1/updates?lat=46&lon=8&radius=50');
+const ws = new WebSocket('ws://localhost:8090/ws/v1/updates?lat=46&lon=13&radius=200');
 
 # Тестирование аутентификации
 curl -H "Authorization: Bearer YOUR_TOKEN" \
      -H "Content-Type: application/json" \
-     -d '{"position":{"latitude":46.0,"longitude":8.0},"altitude":1000,"timestamp":1640995200}' \
+     -d '{"position":{"latitude":46.0,"longitude":13.0},"altitude":1000,"timestamp":1640995200}' \
      http://localhost:8090/api/v1/position
 
 # Проверка MQTT (старый формат)

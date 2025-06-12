@@ -93,7 +93,9 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		return
 	}
 
-	stations, err := h.repo.GetStationsInRadius(ctx, center, float64(radius))
+	// Для snapshot получаем все станции, не только в радиусе
+	// (станции без координат не индексируются в GEO, но сохраняются в Redis)
+	stations, err := h.repo.GetAllStations(ctx)
 	if err != nil {
 		h.logger.WithField("error", err).Error("Failed to get stations")
 		c.JSON(http.StatusInternalServerError, gin.H{
