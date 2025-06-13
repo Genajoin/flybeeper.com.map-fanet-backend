@@ -65,7 +65,7 @@ func main() {
 		clientID      = flag.String("client", "fanet-test-publisher", "MQTT client ID")
 		seed          = flag.Int64("seed", time.Now().UnixNano(), "Random seed")
 		lat           = flag.Float64("lat", 46.0, "Start latitude")
-		lon           = flag.Float64("lon", 8.0, "Start longitude")
+		lon           = flag.Float64("lon", 13.0, "Start longitude")
 		speed         = flag.Float64("speed", 50.0, "Movement speed km/h")
 	)
 	flag.Parse()
@@ -350,7 +350,7 @@ func (p *TestPublisher) createPayload(pilot *PilotState, packetType int) ([]byte
 
 // createAirTrackingPayload создает payload для Type 1 (Air Tracking)
 func (p *TestPublisher) createAirTrackingPayload(pilot *PilotState) []byte {
-	payload := make([]byte, 12)
+	payload := make([]byte, 11) // 11 байт: 6(координаты) + 2(alt_status) + 1(speed) + 1(climb) + 1(heading)
 
 	// Координаты (3 + 3 байта)
 	latRaw := int32(pilot.Latitude * 93206.04)
@@ -364,21 +364,69 @@ func (p *TestPublisher) createAirTrackingPayload(pilot *PilotState) []byte {
 	payload[4] = byte((lonRaw >> 8) & 0xFF)
 	payload[5] = byte((lonRaw >> 16) & 0xFF)
 
-	// Высота (2 байта): altitude - 1000
-	altRaw := uint16(pilot.Altitude - 1000)
-	binary.LittleEndian.PutUint16(payload[6:8], altRaw)
-
-	// Скорость (1 байт): km/h * 2
-	payload[8] = byte(pilot.Speed * 2)
-
-	// Вертикальная скорость (1 байт): climb * 10 + 128
-	payload[9] = byte(pilot.ClimbRate + 128)
-
-	// Курс (1 байт): degrees * 256 / 360
+	// Alt_status (2 байта) - согласно FANET спецификации
+	// Bit 15: Online Tracking (1=онлайн, 0=replay)
+	// Bits 14-12: Aircraft Type (0-7)
+	// Bit 11: Altitude scaling (0=1x, 1=4x)
+	// Bits 10-0: Altitude в метрах
+	
+	var altStatus uint16
+	altStatus |= 0x8000 // Bit 15: Online tracking = 1
+	altStatus |= uint16(pilot.AircraftType&0x07) << 12 // Bits 14-12: Aircraft type
+	
+	// Определяем нужно ли 4x scaling для высоты
+	altRaw := pilot.Altitude
+	if altRaw > 2047 { // Максимум для 11 бит = 2047
+		altStatus |= 0x0800 // Bit 11: 4x scaling
+		altRaw = altRaw / 4
+		if altRaw > 2047 {
+			altRaw = 2047 // Ограничиваем максимум
+		}
+	}
+	altStatus |= uint16(altRaw & 0x07FF) // Bits 10-0: высота
+	
+	binary.LittleEndian.PutUint16(payload[6:8], altStatus)
+	
+	// Скорость (1 байт) - Byte 8
+	// Bit 7: Speed scaling (0=1x, 1=5x)
+	// Bits 6-0: Speed в 0.5 км/ч
+	var speedByte uint8
+	speedVal := pilot.Speed
+	if speedVal > 63 { // Максимум для 7 бит в единицах 0.5 км/ч = 31.5 км/ч
+		speedByte |= 0x80 // Bit 7: 5x scaling
+		speedVal = speedVal / 5
+		if speedVal > 63 {
+			speedVal = 63
+		}
+	}
+	// Преобразуем км/ч в единицы 0.5 км/ч
+	speedByte |= uint8((speedVal * 2) & 0x7F) // Bits 6-0
+	payload[8] = speedByte
+	
+	// Вертикальная скорость (1 байт) - Byte 9
+	// Bit 7: Climb scaling (0=1x, 1=5x)
+	// Bits 6-0: Climb rate в 0.1 м/с (signed 7-bit)
+	var climbByte uint8
+	climbVal := pilot.ClimbRate // уже в единицах 0.1 м/с
+	if climbVal > 63 || climbVal < -64 { // 7-bit signed range: -64 до +63
+		climbByte |= 0x80 // Bit 7: 5x scaling
+		climbVal = climbVal / 5
+		if climbVal > 63 {
+			climbVal = 63
+		} else if climbVal < -64 {
+			climbVal = -64
+		}
+	}
+	// 7-bit signed: преобразуем в unsigned для хранения
+	climbByte |= uint8(climbVal & 0x7F) // Bits 6-0
+	payload[9] = climbByte
+	
+	// Курс (1 байт) - Byte 10
+	// 0-255 представляет 0-360°
 	payload[10] = byte(float32(pilot.Heading) * 256.0 / 360.0)
-
-	// Тип ВС (1 байт)
-	payload[11] = pilot.AircraftType
+	
+	// Опциональные поля (не включаем AircraftType отдельно)
+	// Тип ВС уже в alt_status
 
 	return payload
 }

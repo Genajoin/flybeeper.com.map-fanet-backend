@@ -82,8 +82,8 @@ struct TrackingData {
 **Декодирование координат:**
 ```go
 // Координаты в градусах
-latitude := float64(lat_raw) / 93206.0
-longitude := float64(lon_raw) / 46603.0
+latitude := float64(lat_raw) / 93206.04
+longitude := float64(lon_raw) / 46603.02
 ```
 
 **Bytes 6-7 (alt_status) битовые поля:**
@@ -277,8 +277,8 @@ func decodeTracking(addr uint32, data []byte) (*TrackingData, error) {
         lonRaw |= 0xFF000000
     }
     
-    latitude := float64(latRaw) / 93206.0
-    longitude := float64(lonRaw) / 46603.0
+    latitude := float64(latRaw) / 93206.04
+    longitude := float64(lonRaw) / 46603.02
     
     // Alt_status (2 байта) если есть
     var altitude int32
@@ -375,8 +375,8 @@ func decodeService(addr uint32, data []byte) (*ServiceData, error) {
         lonRaw |= 0xFF000000
     }
     
-    latitude := float64(latRaw) / 93206.0
-    longitude := float64(lonRaw) / 46603.0
+    latitude := float64(latRaw) / 93206.04
+    longitude := float64(lonRaw) / 46603.02
     
     service := &ServiceData{
         Addr:      addr,

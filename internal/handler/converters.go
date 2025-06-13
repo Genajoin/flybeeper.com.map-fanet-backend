@@ -32,7 +32,7 @@ func convertPilotToProto(pilot *models.Pilot) *pb.Pilot {
 		},
 		Altitude:    int32(pilot.Position.Altitude),
 		Speed:       float32(pilot.Speed),
-		Climb:       float32(pilot.ClimbRate) / 100, // ClimbRate в м/с * 100
+		Climb:       float32(pilot.ClimbRate) / 10, // ClimbRate в 0.1 м/с -> м/с
 		Course:      float32(pilot.Heading),
 		LastUpdate:  pilot.LastUpdate.Unix(),
 		TrackOnline: pilot.TrackOnline,
@@ -83,7 +83,7 @@ func convertThermalToProto(thermal *models.Thermal) *pb.Thermal {
 		},
 		Altitude:    thermal.Altitude,
 		Quality:     uint32(thermal.Quality),
-		Climb:       float32(thermal.ClimbRate) / 100, // ClimbRate в м/с * 100
+		Climb:       float32(thermal.ClimbRate) / 10, // ClimbRate в 0.1 м/с -> м/с
 		WindSpeed:   float32(thermal.WindSpeed) / 3.6, // км/ч -> м/с
 		WindHeading: float32(thermal.WindDirection),
 		Timestamp:   thermal.Timestamp.Unix(),
@@ -169,7 +169,7 @@ func convertPilotToJSON(pilot *models.Pilot) map[string]interface{} {
 		},
 		"altitude":     pilot.Position.Altitude,
 		"speed":        pilot.Speed,
-		"climb":        float32(pilot.ClimbRate) / 100,
+		"climb":        float32(pilot.ClimbRate) / 10,
 		"course":       pilot.Heading,
 		"last_update":  pilot.LastUpdate.Unix(),
 		"track_online": pilot.TrackOnline,
@@ -198,7 +198,7 @@ func convertThermalToJSON(thermal *models.Thermal) map[string]interface{} {
 		},
 		"altitude":     thermal.Altitude,
 		"quality":      thermal.Quality,
-		"climb":        float32(thermal.ClimbRate) / 100,
+		"climb":        float32(thermal.ClimbRate) / 10,
 		"wind_speed":   float32(thermal.WindSpeed) / 3.6,
 		"wind_heading": thermal.WindDirection,
 		"timestamp":    thermal.Timestamp.Unix(),
@@ -274,7 +274,7 @@ func protoToModelsPilots(pilots []*pb.Pilot) []*models.Pilot {
 				Altitude:  int16(pilot.Altitude),
 			},
 			Speed:       float32(pilot.Speed),
-			ClimbRate:   int16(pilot.Climb * 100),
+			ClimbRate:   int16(pilot.Climb * 10),
 			Heading:     float32(pilot.Course),
 			TrackOnline: pilot.TrackOnline,
 			Battery:     uint8(pilot.Battery),

@@ -293,7 +293,7 @@ func convertFANETToPilot(msg *mqtt.FANETMessage) *models.Pilot {
 		Speed:       float32(airData.Speed),
 		ClimbRate:   airData.ClimbRate,
 		Heading:     float32(airData.Heading),
-		TrackOnline: true, // Факт получения сообщения означает онлайн
+		TrackOnline: airData.OnlineTracking, // Из FANET alt_status bit 15
 		Battery:     100,  // Нет в FANET Type 1
 		LastUpdate:  msg.Timestamp,
 	}

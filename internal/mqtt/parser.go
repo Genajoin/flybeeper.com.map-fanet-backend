@@ -33,6 +33,7 @@ type AirTrackingData struct {
 	ClimbRate   int16   `json:"climb_rate"`   // Скорость набора высоты в м/с * 10
 	TurnRate    int16   `json:"turn_rate"`    // Скорость поворота в град/с * 10
 	AircraftType uint8  `json:"aircraft_type"` // Тип ВС (1=Paraglider, 2=Hangglider, etc)
+	OnlineTracking bool  `json:"online_tracking"` // Онлайн трекинг (bit 15 в alt_status)
 }
 
 // NameData данные имени (Type 2)
@@ -238,45 +239,76 @@ func (p *Parser) parseAirTracking(data []byte) (*AirTrackingData, error) {
 	// Latitude: deg * 93206.04, signed 24-bit
 	latRaw := int32(data[0]) | int32(data[1])<<8 | int32(data[2])<<16
 	if latRaw&0x800000 != 0 { // Знаковое расширение для 24-bit
-		latRaw |= ^0xFFFFFF
+		latRaw |= -16777216  // 0xFF000000 как отрицательное int32
 	}
 	latitude := float64(latRaw) / 93206.04
 	
 	// Longitude: deg * 46603.02, signed 24-bit
 	lonRaw := int32(data[3]) | int32(data[4])<<8 | int32(data[5])<<16
 	if lonRaw&0x800000 != 0 { // Знаковое расширение для 24-bit
-		lonRaw |= ^0xFFFFFF
+		lonRaw |= -16777216  // 0xFF000000 как отрицательное int32
 	}
 	longitude := float64(lonRaw) / 46603.02
 	
-	// Высота (2 байта): (altitude - 1000) метров
-	altitudeRaw := binary.LittleEndian.Uint16(data[6:8])
-	altitude := int32(altitudeRaw) + 1000
+	// Alt_status (2 байта) - биты 6-7
+	altStatus := binary.LittleEndian.Uint16(data[6:8])
 	
-	// Скорость (1 байт): km/h * 2
+	// Извлекаем поля согласно спецификации
+	onlineTracking := (altStatus & 0x8000) != 0  // Bit 15: Online Tracking flag
+	aircraftType := uint8((altStatus >> 12) & 0x07)  // Bits 14-12: Aircraft Type
+	altScale := (altStatus & 0x0800) != 0  // Bit 11: altitude scaling
+	altRaw := int32(altStatus & 0x07FF)  // Bits 10-0: altitude в метрах
+	
+	// Применяем масштабирование высоты
+	var altitude int32
+	if altScale {
+		altitude = altRaw * 4
+	} else {
+		altitude = altRaw
+	}
+	
+	// Скорость (1 байт) - байт 8
 	speedRaw := data[8]
-	speed := uint16(speedRaw) / 2
+	speedScale := (speedRaw & 0x80) != 0  // Bit 7: speed scaling
+	speedVal := float32(speedRaw & 0x7F)  // Bits 6-0
 	
-	// Вертикальная скорость (1 байт): (climb * 10) + 128
+	var speed uint16
+	if speedScale {
+		speed = uint16(speedVal * 5 * 0.5)  // 5x scaling, единицы 0.5 км/ч
+	} else {
+		speed = uint16(speedVal * 0.5)
+	}
+	
+	// Вертикальная скорость (1 байт) - байт 9
 	climbRaw := data[9]
-	climbRate := int16(climbRaw) - 128 // м/с * 10
+	climbScale := (climbRaw & 0x80) != 0  // Bit 7: climb scaling
+	climbVal := int8(climbRaw & 0x7F)  // Bits 6-0 (signed 7-bit)
 	
-	// Курс (1 байт): degrees * 256 / 360
+	// Знаковое расширение для 7-битного signed значения
+	if climbVal&0x40 != 0 {
+		climbVal |= -128  // 0x80 как отрицательное int8
+	}
+	
+	var climbRate int16
+	if climbScale {
+		climbRate = int16(climbVal) * 5  // 5x scaling, единицы 0.1 м/с -> результат в 0.1 м/с
+	} else {
+		climbRate = int16(climbVal)  // единицы 0.1 м/с
+	}
+	
+	// Курс (1 байт) - байт 10
 	headingRaw := data[10]
 	heading := uint16(float32(headingRaw) * 360.0 / 256.0)
 	
 	tracking := &AirTrackingData{
-		Latitude:  latitude,
-		Longitude: longitude,
-		Altitude:  altitude,
-		Speed:     speed,
-		Heading:   heading,
-		ClimbRate: climbRate,
-	}
-	
-	// Тип летательного аппарата (опционально)
-	if len(data) >= 12 {
-		tracking.AircraftType = data[11]
+		Latitude:       latitude,
+		Longitude:      longitude,
+		Altitude:       altitude,
+		Speed:          speed,
+		Heading:        heading,
+		ClimbRate:      climbRate,
+		AircraftType:   aircraftType,   // Извлечено из alt_status bits 14-12
+		OnlineTracking: onlineTracking, // Извлечено из alt_status bit 15
 	}
 	
 	return tracking, nil
