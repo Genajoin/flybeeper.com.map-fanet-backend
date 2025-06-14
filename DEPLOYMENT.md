@@ -128,15 +128,15 @@ docker run -d \
 
 ### Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `SERVER_PORT` | ❌ | 8090 | HTTP server port |
-| `REDIS_URL` | ✅ | - | Redis connection string |
-| `MQTT_URL` | ✅ | - | MQTT broker URL |
-| `MYSQL_DSN` | ❌ | - | MySQL connection (backup) |
-| `AUTH_ENDPOINT` | ✅ | - | Laravel auth API |
-| `LOG_LEVEL` | ❌ | info | debug/info/warn/error |
-| `ENVIRONMENT` | ❌ | production | Environment mode |
+| Variable        | Required | Default    | Description               |
+| --------------- | -------- | ---------- | ------------------------- |
+| `SERVER_PORT`   | ❌        | 8090       | HTTP server port          |
+| `REDIS_URL`     | ✅        | -          | Redis connection string   |
+| `MQTT_URL`      | ✅        | -          | MQTT broker URL           |
+| `MYSQL_DSN`     | ❌        | -          | MySQL connection (backup) |
+| `AUTH_ENDPOINT` | ✅        | -          | Laravel auth API          |
+| `LOG_LEVEL`     | ❌        | info       | debug/info/warn/error     |
+| `ENVIRONMENT`   | ❌        | production | Environment mode          |
 
 ### 📝 Примеры конфигурации
 
@@ -221,7 +221,7 @@ kubectl logs -f deployment/fanet-api -n fanet
 curl https://api.flybeeper.com/health
 
 # API тест
-curl "https://api.flybeeper.com/api/v1/snapshot?lat=46.0&lon=8.0&radius=50"
+curl "https://fanet-api.flybeeper.com/api/v1/snapshot?lat=46.0&lon=8.0&radius=50"
 
 # WebSocket тест
 wscat -c "wss://api.flybeeper.com/ws/v1/updates?lat=46&lon=8&radius=50"
@@ -456,13 +456,13 @@ Memory per conn:   ~100KB (оптимизировано)
 
 ### Capacity Planning
 
-| Метрика | 1 Pod | 3 Pods | 10 Pods |
-|---------|-------|--------|---------|
-| WebSocket connections | 1000 | 3000 | 10000 |
-| HTTP requests/sec | 500 | 1500 | 5000 |
-| MQTT messages/sec | 1000 | 3000 | 10000 |
-| Memory usage | 256MB | 768MB | 2.5GB |
-| CPU usage | 250m | 750m | 2.5 cores |
+| Метрика               | 1 Pod | 3 Pods | 10 Pods   |
+| --------------------- | ----- | ------ | --------- |
+| WebSocket connections | 1000  | 3000   | 10000     |
+| HTTP requests/sec     | 500   | 1500   | 5000      |
+| MQTT messages/sec     | 1000  | 3000   | 10000     |
+| Memory usage          | 256MB | 768MB  | 2.5GB     |
+| CPU usage             | 250m  | 750m   | 2.5 cores |
 
 ## 🔗 Полезные ссылки
 

@@ -68,3 +68,4 @@ pkg/pb/*.pb.go
 .env.*.local
 scripts/mqtt-test-publisher
 .claude/settings.local.json
+fanet-api

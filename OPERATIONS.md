@@ -48,19 +48,19 @@ kubectl describe hpa fanet-api-hpa -n fanet
 
 #### 🎯 SLA Метрики
 
-| Метрика | Target | Critical |
-|---------|--------|----------|
-| **Uptime** | > 99.9% | < 99.0% |
-| **Response time (p95)** | < 50ms | > 500ms |
-| **Error rate** | < 1% | > 5% |
-| **WebSocket connections** | Stable | Drops > 10% |
-| **MQTT processing lag** | < 100ms | > 1s |
+| Метрика                   | Target  | Critical    |
+| ------------------------- | ------- | ----------- |
+| **Uptime**                | > 99.9% | < 99.0%     |
+| **Response time (p95)**   | < 50ms  | > 500ms     |
+| **Error rate**            | < 1%    | > 5%        |
+| **WebSocket connections** | Stable  | Drops > 10% |
+| **MQTT processing lag**   | < 100ms | > 1s        |
 
 #### 📊 Business Метрики
 
 ```bash
 # Активные пилоты
-curl -s "https://api.flybeeper.com/api/v1/pilots?lat=46&lon=8&radius=200" | jq '.pilots | length'
+curl -s "https://fanet-api.flybeeper.com/api/v1/pilots?lat=46&lon=8&radius=200" | jq '.pilots | length'
 
 # WebSocket подключения
 curl -s https://api.flybeeper.com/metrics | grep websocket_connections_active
@@ -416,12 +416,12 @@ kubectl patch deployment fanet-api -n fanet -p '
 
 #### Scaling Thresholds
 
-| Load Level | Pods | Resources | Notes |
-|------------|------|-----------|-------|
-| **Low** (< 50%) | 3-5 | 256MB/250m | Normal operations |
-| **Medium** (50-80%) | 5-10 | 512MB/500m | Peak hours |
-| **High** (80-95%) | 10-15 | 1GB/1000m | Traffic spikes |
-| **Critical** (> 95%) | 15-20 | 2GB/2000m | Emergency scaling |
+| Load Level           | Pods  | Resources  | Notes             |
+| -------------------- | ----- | ---------- | ----------------- |
+| **Low** (< 50%)      | 3-5   | 256MB/250m | Normal operations |
+| **Medium** (50-80%)  | 5-10  | 512MB/500m | Peak hours        |
+| **High** (80-95%)    | 10-15 | 1GB/1000m  | Traffic spikes    |
+| **Critical** (> 95%) | 15-20 | 2GB/2000m  | Emergency scaling |
 
 ### Resource Planning
 

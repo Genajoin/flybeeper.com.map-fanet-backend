@@ -12,7 +12,7 @@ FANET API предоставляет high-performance real-time данные о 
 ## 🔗 Endpoints
 
 ### Base URL
-- **Production**: `https://api.flybeeper.com/fanet`
+- **Production**: `https://fanet-api.flybeeper.com`
 - **Development**: `http://localhost:8090`
 
 ### API Версия
@@ -48,7 +48,7 @@ const { token } = await loginResponse.json();
 ### Использование токена
 ```javascript
 // Все запросы к FANET API с токеном
-const response = await fetch('https://api.flybeeper.com/fanet/api/v1/snapshot?lat=46&lon=8&radius=50', {
+const response = await fetch('https://fanet-api.flybeeper.com/api/v1/snapshot?lat=46&lon=8&radius=50', {
   headers: {
     'Authorization': `Bearer ${token}`,
     'Accept': 'application/json'
@@ -145,7 +145,7 @@ const response = await fetch('/api/v1/position', {
 
 ### Подключение
 ```javascript
-const ws = new WebSocket('wss://api.flybeeper.com/fanet/ws/v1/updates?lat=46&lon=8&radius=50');
+const ws = new WebSocket('wss://fanet-api.flybeeper.com/ws/v1/updates?lat=46&lon=8&radius=50');
 
 ws.onopen = () => {
   console.log('WebSocket connected');
