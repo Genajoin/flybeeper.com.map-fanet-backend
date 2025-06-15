@@ -69,3 +69,4 @@ pkg/pb/*.pb.go
 scripts/mqtt-test-publisher
 .claude/settings.local.json
 fanet-api
+deployments/timeweb
