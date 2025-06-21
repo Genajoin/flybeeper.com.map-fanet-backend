@@ -299,6 +299,12 @@ func (r *MySQLRepository) GetPilotTrack(ctx context.Context, deviceID string, li
 		return nil, fmt.Errorf("invalid device ID format: %s", deviceID)
 	}
 
+	r.logger.WithFields(map[string]interface{}{
+		"device_id": deviceID,
+		"addr_int":  addr,
+		"limit":     limit,
+	}).Debug("Getting pilot track from MySQL")
+
 	query := `
 		SELECT latitude, longitude, altitude_gps, datestamp
 		FROM ufo_track
@@ -307,8 +313,15 @@ func (r *MySQLRepository) GetPilotTrack(ctx context.Context, deviceID string, li
 		LIMIT ?
 	`
 
+	r.logger.WithFields(map[string]interface{}{
+		"query": query,
+		"addr":  addr,
+		"limit": limit,
+	}).Debug("Executing MySQL query for pilot track")
+
 	rows, err := r.db.QueryContext(ctx, query, addr, limit)
 	if err != nil {
+		r.logger.WithField("error", err).Error("Failed to execute MySQL query")
 		return nil, fmt.Errorf("failed to query pilot track: %w", err)
 	}
 	defer rows.Close()
@@ -344,6 +357,11 @@ func (r *MySQLRepository) GetPilotTrack(ctx context.Context, deviceID string, li
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("error iterating track points: %w", err)
 	}
+
+	r.logger.WithFields(map[string]interface{}{
+		"device_id":    deviceID,
+		"points_count": len(track),
+	}).Debug("Retrieved pilot track from MySQL")
 
 	return track, nil
 }

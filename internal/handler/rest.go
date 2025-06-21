@@ -19,17 +19,19 @@ import (
 
 // RESTHandler обработчик REST API endpoints
 type RESTHandler struct {
-	repo    repository.Repository
-	logger  *utils.Logger
-	timeout time.Duration
+	repo        repository.Repository
+	historyRepo repository.HistoryRepository
+	logger      *utils.Logger
+	timeout     time.Duration
 }
 
 // NewRESTHandler создает новый REST handler
-func NewRESTHandler(repo repository.Repository, logger *utils.Logger) *RESTHandler {
+func NewRESTHandler(repo repository.Repository, historyRepo repository.HistoryRepository, logger *utils.Logger) *RESTHandler {
 	return &RESTHandler{
-		repo:    repo,
-		logger:  logger,
-		timeout: 30 * time.Second,
+		repo:        repo,
+		historyRepo: historyRepo,
+		logger:      logger,
+		timeout:     30 * time.Second,
 	}
 }
 
@@ -334,18 +336,33 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		}
 	}
 
-	// Для получения трека нужен доступ к MySQL репозиторию
-	// Пока что возвращаем заглушку
-	track := []models.GeoPoint{
-		{
-			Latitude:  46.5,
-			Longitude: 15.6,
-			Altitude:  1000,
-		},
+	// Формат ответа (по умолчанию json)
+	format := c.DefaultQuery("format", "json")
+	
+	// Валидация формата
+	if format != "json" && format != "geojson" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    "invalid_format",
+			"message": "Invalid format parameter. Supported: json, geojson",
+		})
+		return
 	}
 
-	// TODO: Реализовать получение трека через service layer
-	err := error(nil)
+	// Проверяем доступность historyRepo
+	if h.historyRepo == nil {
+		h.logger.Error("MySQL repository not available")
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"code":    "mysql_unavailable",
+			"message": "MySQL history repository not available",
+		})
+		return
+	}
+
+	// Получаем трек из MySQL базы данных
+	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
+	defer cancel()
+	
+	track, err := h.historyRepo.GetPilotTrack(ctx, addrStr, 1000)
 	if err != nil {
 		h.logger.WithField("error", err).WithField("addr", addrStr).Error("Failed to get pilot track")
 		c.JSON(http.StatusNotFound, gin.H{
@@ -393,6 +410,8 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 			return
 		}
 		c.Data(http.StatusOK, "application/x-protobuf", data)
+	} else if format == "geojson" {
+		c.JSON(http.StatusOK, convertTrackToGeoJSON(response.Track))
 	} else {
 		c.JSON(http.StatusOK, convertTrackToJSON(response.Track))
 	}

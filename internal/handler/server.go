@@ -31,7 +31,7 @@ type Server struct {
 }
 
 // NewServer создает новый HTTP сервер
-func NewServer(cfg *config.Config, repo repository.Repository, redisClient *redis.Client, logger *utils.Logger) *Server {
+func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repository.HistoryRepository, redisClient *redis.Client, logger *utils.Logger) *Server {
 	// Production mode для Gin
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -49,7 +49,7 @@ func NewServer(cfg *config.Config, repo repository.Repository, redisClient *redi
 	router.Use(metrics.HTTPMetricsMiddleware())
 
 	// REST handler
-	restHandler := NewRESTHandler(repo, logger)
+	restHandler := NewRESTHandler(repo, historyRepo, logger)
 	
 	// WebSocket handler
 	wsHandler := NewWebSocketHandler(repo, logger)

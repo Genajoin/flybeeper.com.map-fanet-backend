@@ -247,6 +247,48 @@ func convertTrackToJSON(track *pb.Track) map[string]interface{} {
 	}
 }
 
+func convertTrackToGeoJSON(track *pb.Track) map[string]interface{} {
+	// Создаем координаты LineString в формате [longitude, latitude]
+	coordinates := make([][]float64, len(track.Points))
+	for i, point := range track.Points {
+		coordinates[i] = []float64{
+			point.Position.Longitude,
+			point.Position.Latitude,
+		}
+	}
+
+	// Генерируем цвет на основе адреса
+	color := generateColorFromAddr(track.Addr)
+
+	// GeoJSON FeatureCollection - точно как в референсе
+	return map[string]interface{}{
+		"type": "FeatureCollection",
+		"features": []map[string]interface{}{
+			{
+				"type": "Feature",
+				"properties": map[string]interface{}{
+					"addr":  track.Addr,
+					"color": color,
+				},
+				"geometry": map[string]interface{}{
+					"type":        "LineString",
+					"coordinates": coordinates,
+				},
+			},
+		},
+	}
+}
+
+// generateColorFromAddr генерирует цвет на основе адреса устройства
+func generateColorFromAddr(addr uint32) string {
+	// Простая цветовая схема на основе адреса
+	colors := []string{
+		"#1bb12e", "#ff6b35", "#f7931e", "#c149ad", "#00b4d8",
+		"#0077b6", "#90e0ef", "#e63946", "#f77f00", "#fcbf49",
+	}
+	return colors[addr%uint32(len(colors))]
+}
+
 // Вспомогательные функции
 
 func protoToModelsPilots(pilots []*pb.Pilot) []*models.Pilot {
