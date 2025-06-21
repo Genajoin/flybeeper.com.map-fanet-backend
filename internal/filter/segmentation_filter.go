@@ -234,24 +234,32 @@ func (f *SegmentationFilter) classifySegment(avgSpeed float64) SegmentType {
 	return SegmentTypeFlight
 }
 
+// GenerateColorBySpeed генерирует цвет на основе средней скорости
+func GenerateColorBySpeed(avgSpeed float64) string {
+	switch {
+	case avgSpeed < 3:
+		return "#2F2F2F" // Темно-серый (стоянка)
+	case avgSpeed < 8:
+		return "#1E3A8A" // Темно-синий (пешеход)
+	case avgSpeed < 20:
+		return "#0EA5E9" // Голубой (бег/велосипед)
+	case avgSpeed < 40:
+		return "#16A34A" // Зеленый (медленный полет - параплан)
+	case avgSpeed < 80:
+		return "#84CC16" // Желто-зеленый (параплан быстро)
+	case avgSpeed < 150:
+		return "#EAB308" // Желтый (дельтаплан)
+	case avgSpeed < 250:
+		return "#F97316" // Оранжевый (планер)
+	default:
+		return "#DC2626" // Красный (самолет)
+	}
+}
+
 // getSegmentColor возвращает цвет для сегмента
 func (f *SegmentationFilter) getSegmentColor(segmentType SegmentType, avgSpeed float64) string {
-	switch segmentType {
-	case SegmentTypeStationary:
-		return "#808080" // Серый
-	case SegmentTypeHike:
-		return "#0066CC" // Синий
-	case SegmentTypeFlight:
-		// Градация цветов для полета
-		if avgSpeed < 30 {
-			return "#00AA00" // Зеленый - медленный полет
-		} else if avgSpeed < 60 {
-			return "#FFAA00" // Желтый - средний полет
-		}
-		return "#FF0000" // Красный - быстрый полет
-	default:
-		return "#000000" // Черный (по умолчанию)
-	}
+	// Используем новую цветовую схему на основе скорости
+	return GenerateColorBySpeed(avgSpeed)
 }
 
 // Name возвращает имя фильтра

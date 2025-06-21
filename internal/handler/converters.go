@@ -291,13 +291,9 @@ func generateColorFromAddr(addr uint32) string {
 	return colors[addr%uint32(len(colors))]
 }
 
-// generateSegmentColor генерирует цвет для сегмента
-func generateSegmentColor(segmentID int) string {
-	colors := []string{
-		"#1bb12e", "#ff6b35", "#f7931e", "#c149ad", "#00b4d8",
-		"#0077b6", "#90e0ef", "#e63946", "#f77f00", "#fcbf49",
-	}
-	return colors[(segmentID-1)%len(colors)]
+// generateSegmentColor генерирует цвет для сегмента на основе средней скорости
+func generateSegmentColor(avgSpeed float64) string {
+	return filter.GenerateColorBySpeed(avgSpeed)
 }
 
 // Вспомогательные функции
@@ -581,10 +577,27 @@ func convertTrackToGeoJSONWithSegments(track *pb.Track, filterResult *filter.Fil
 		// Создаем базовые SegmentInfo для каждого найденного сегмента
 		for segmentID, indices := range segmentMap {
 			if len(indices) > 1 {
+				// Вычисляем среднюю скорость для сегмента
+				totalSpeed := 0.0
+				speedCount := 0
+				for _, idx := range indices {
+					if idx < len(filterResult.Points) && !filterResult.Points[idx].Filtered {
+						if filterResult.Points[idx].Speed > 0 {
+							totalSpeed += filterResult.Points[idx].Speed
+							speedCount++
+						}
+					}
+				}
+				avgSpeed := 0.0
+				if speedCount > 0 {
+					avgSpeed = totalSpeed / float64(speedCount)
+				}
+				
 				segments = append(segments, filter.SegmentInfo{
 					ID:         segmentID,
-					Color:      generateSegmentColor(segmentID),
+					Color:      generateSegmentColor(avgSpeed),
 					PointCount: len(indices),
+					AvgSpeed:   avgSpeed,
 				})
 			}
 		}

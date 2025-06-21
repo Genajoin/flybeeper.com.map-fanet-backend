@@ -23,7 +23,7 @@ func NewLevel1FilterChain(config *FilterConfig, logger *utils.Logger) *FilterCha
 }
 
 // NewLevel2FilterChain создает среднюю цепочку фильтров (уровень 2)
-// Сначала сегментирует по времени, затем применяет Level 1 фильтры к каждому сегменту
+// Сначала очищает граничные выбросы, затем сегментирует по времени и применяет Level 1 фильтры к каждому сегменту
 func NewLevel2FilterChain(config *FilterConfig, logger *utils.Logger) *FilterChain {
 	chain := &FilterChain{
 		filters: make([]TrackFilter, 0),
@@ -31,10 +31,13 @@ func NewLevel2FilterChain(config *FilterConfig, logger *utils.Logger) *FilterCha
 		logger:  logger,
 	}
 	
-	// 1. Сначала сегментируем по временным разрывам (30 минут)
+	// 1. Предварительная очистка граничных выбросов
+	chain.AddFilter(NewPreCleanupFilter(config, logger))
+	
+	// 2. Сегментируем по временным разрывам (30 минут)
 	chain.AddFilter(NewTimeGapSegmentationFilter(config, logger, 30))
 	
-	// 2. Затем применяем Level 1 фильтры к каждому сегменту независимо
+	// 3. Применяем Level 1 фильтры к каждому сегменту независимо
 	chain.AddFilter(NewSegmentedFilterChain(config, logger))
 	
 	return chain

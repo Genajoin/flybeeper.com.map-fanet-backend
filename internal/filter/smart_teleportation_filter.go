@@ -178,19 +178,29 @@ func (f *SmartTeleportationFilter) Filter(track *TrackData) (*FilterResult, erro
 	maxJump := 0.0
 	maxSpeedDetected := 0.0
 	
-	// Первая точка всегда остается
-	result = append(result, track.Points[0])
-	pingPongDetector.AddPoint(track.Points[0].Position)
+	// Определяем медианный центр трека для проверки граничных точек
+	medianCenter := f.calculateMedianCenter(track.Points)
 	
-	for i := 1; i < len(track.Points); i++ {
+	// Обрабатываем все точки, включая первую
+	for i := 0; i < len(track.Points); i++ {
 		currPoint := track.Points[i]
-		prevPoint := result[len(result)-1]
 		
 		shouldFilter := false
 		filterReason := ""
 		
+		// Для первой точки проверяем расстояние от медианного центра
+		if i == 0 {
+			distanceFromCenter := currPoint.Position.DistanceTo(medianCenter)
+			// Если первая точка слишком далеко от центра и есть другие точки рядом с центром
+			if distanceFromCenter > 200 && len(track.Points) > 10 { // 200 км от центра
+				shouldFilter = true
+				filterReason = fmt.Sprintf("First point outlier: %.1f km from median center", distanceFromCenter)
+				teleportations++
+			}
+		}
+		
 		// 1. Проверка на массовые дубли
-		if f.isDuplicate(track.Points, i) {
+		if !shouldFilter && f.isDuplicate(track.Points, i) {
 			shouldFilter = true
 			filterReason = "Massive duplicate"
 			massiveDuplicates++
@@ -203,8 +213,8 @@ func (f *SmartTeleportationFilter) Filter(track *TrackData) (*FilterResult, erro
 			pingPongPoints++
 		}
 		
-		// 3. Проверка скорости
-		if !shouldFilter && currPoint.Speed > 0 {
+		// 3. Проверка скорости (пропускаем для первой точки)
+		if !shouldFilter && i > 0 && currPoint.Speed > 0 {
 			// Абсолютное превышение скорости
 			if currPoint.Speed > f.maxReasonableSpeed {
 				shouldFilter = true
@@ -230,7 +240,8 @@ func (f *SmartTeleportationFilter) Filter(track *TrackData) (*FilterResult, erro
 		}
 		
 		// 4. Проверка расстояния (экстремальные телепортации)
-		if !shouldFilter {
+		if !shouldFilter && i > 0 && len(result) > 0 {
+			prevPoint := result[len(result)-1]
 			distance := prevPoint.Position.DistanceTo(currPoint.Position)
 			if distance > 200 { // Сохраняем проверку на экстремальные расстояния
 				shouldFilter = true
@@ -297,4 +308,38 @@ func (f *SmartTeleportationFilter) Name() string {
 // Description возвращает описание фильтра
 func (f *SmartTeleportationFilter) Description() string {
 	return fmt.Sprintf("Smart teleportation detection: speed limit %.0f km/h, ping-pong detection, massive duplicates", f.maxReasonableSpeed)
+}
+
+// calculateMedianCenter вычисляет медианный центр трека
+func (f *SmartTeleportationFilter) calculateMedianCenter(points []TrackPoint) models.GeoPoint {
+	if len(points) < 3 {
+		// Для маленьких треков возвращаем центр первых точек
+		return points[0].Position
+	}
+	
+	lats := make([]float64, 0, len(points))
+	lons := make([]float64, 0, len(points))
+	
+	// Используем все точки для вычисления центра
+	for _, point := range points {
+		lats = append(lats, point.Position.Latitude)
+		lons = append(lons, point.Position.Longitude)
+	}
+	
+	// Вычисляем медиану
+	sort.Float64s(lats)
+	sort.Float64s(lons)
+	
+	medianLat := lats[len(lats)/2]
+	medianLon := lons[len(lons)/2]
+	
+	if len(lats)%2 == 0 {
+		medianLat = (lats[len(lats)/2-1] + lats[len(lats)/2]) / 2
+		medianLon = (lons[len(lons)/2-1] + lons[len(lons)/2]) / 2
+	}
+	
+	return models.GeoPoint{
+		Latitude:  medianLat,
+		Longitude: medianLon,
+	}
 }

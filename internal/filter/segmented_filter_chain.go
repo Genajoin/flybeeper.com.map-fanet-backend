@@ -62,10 +62,17 @@ func (s *SegmentedFilterChain) Filter(track *TrackData) (*FilterResult, error) {
 	// Применяем Level 1 фильтры к каждому сегменту
 	for segmentID, indices := range segmentMap {
 		if len(indices) < 2 {
-			// Слишком мало точек в сегменте - пропускаем фильтрацию
+			// Слишком мало точек в сегменте - помечаем все точки как отфильтрованные
 			s.logger.WithField("segment_id", segmentID).
 				WithField("points", len(indices)).
-				Debug("Skipping segment with too few points")
+				Debug("Filtering out segment with too few points")
+			
+			// Помечаем единственную точку как отфильтрованную
+			for _, idx := range indices {
+				resultPoints[idx].Filtered = true
+				resultPoints[idx].FilterReason = "Isolated segment point"
+			}
+			totalFilteredCount += len(indices)
 			continue
 		}
 
@@ -129,9 +136,13 @@ func (s *SegmentedFilterChain) Filter(track *TrackData) (*FilterResult, error) {
 		}
 		
 		if validPoints > 1 {
-			// Находим временные границы сегмента
+			// Находим временные границы сегмента и вычисляем среднюю скорость
 			var startTime, endTime time.Time
-			for _, point := range segmentResult.Points {
+			totalDistance := 0.0
+			segmentSpeed := 0.0
+			speedCount := 0
+			
+			for i, point := range segmentResult.Points {
 				if !point.Filtered {
 					if startTime.IsZero() || point.Timestamp.Before(startTime) {
 						startTime = point.Timestamp
@@ -139,7 +150,26 @@ func (s *SegmentedFilterChain) Filter(track *TrackData) (*FilterResult, error) {
 					if endTime.IsZero() || point.Timestamp.After(endTime) {
 						endTime = point.Timestamp
 					}
+					
+					// Вычисляем расстояние и скорость
+					if i > 0 && !segmentResult.Points[i-1].Filtered {
+						dist := segmentResult.Points[i-1].Position.DistanceTo(point.Position)
+						totalDistance += dist
+					}
+					
+					if point.Speed > 0 {
+						segmentSpeed += point.Speed
+						speedCount++
+					}
 				}
+			}
+			
+			// Средняя скорость сегмента
+			avgSpeed := 0.0
+			if speedCount > 0 {
+				avgSpeed = segmentSpeed / float64(speedCount)
+			} else if endTime.Sub(startTime).Hours() > 0 {
+				avgSpeed = totalDistance / endTime.Sub(startTime).Hours()
 			}
 			
 			segmentInfo := SegmentInfo{
@@ -149,8 +179,10 @@ func (s *SegmentedFilterChain) Filter(track *TrackData) (*FilterResult, error) {
 				StartTime:    startTime,
 				EndTime:      endTime,
 				Duration:     endTime.Sub(startTime).Minutes(),
+				Distance:     totalDistance,
+				AvgSpeed:     avgSpeed,
 				PointCount:   validPoints,
-				Color:        generateSegmentColor(segmentID),
+				Color:        generateSegmentColor(avgSpeed),
 			}
 			
 			allSegments = append(allSegments, segmentInfo)
@@ -210,11 +242,7 @@ func (s *SegmentedFilterChain) Description() string {
 	return "Applies Level 1 filters to each track segment independently"
 }
 
-// generateSegmentColor генерирует цвет для сегмента
-func generateSegmentColor(segmentID int) string {
-	colors := []string{
-		"#1bb12e", "#ff6b35", "#f7931e", "#c149ad", "#00b4d8",
-		"#0077b6", "#90e0ef", "#e63946", "#f77f00", "#fcbf49",
-	}
-	return colors[(segmentID-1)%len(colors)]
+// generateSegmentColor генерирует цвет для сегмента на основе средней скорости
+func generateSegmentColor(avgSpeed float64) string {
+	return GenerateColorBySpeed(avgSpeed)
 }
