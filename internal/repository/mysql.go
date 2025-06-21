@@ -366,6 +366,123 @@ func (r *MySQLRepository) GetPilotTrack(ctx context.Context, deviceID string, li
 	return track, nil
 }
 
+// GetPilotTrackWithTimestamps получает историю трека пилота с временными метками
+func (r *MySQLRepository) GetPilotTrackWithTimestamps(ctx context.Context, deviceID string, limit int) ([]models.TrackGeoPoint, error) {
+	// Конвертируем hex device ID в int
+	addr, err := strconv.ParseInt(deviceID, 16, 32)
+	if err != nil {
+		return nil, fmt.Errorf("invalid device ID format: %s", deviceID)
+	}
+
+	r.logger.WithFields(map[string]interface{}{
+		"device_id": deviceID,
+		"addr_int":  addr,
+		"limit":     limit,
+	}).Debug("Getting pilot track with timestamps from MySQL")
+
+	query := `
+		SELECT latitude, longitude, altitude_gps, datestamp
+		FROM ufo_track
+		WHERE addr = ? AND datestamp > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+		ORDER BY datestamp DESC
+		LIMIT ?
+	`
+
+	rows, err := r.db.QueryContext(ctx, query, addr, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query pilot track: %w", err)
+	}
+	defer rows.Close()
+
+	var track []models.TrackGeoPoint
+	for rows.Next() {
+		var (
+			lat, lon  float64
+			altitude  sql.NullFloat64
+			timestamp time.Time
+		)
+
+		err := rows.Scan(&lat, &lon, &altitude, &timestamp)
+		if err != nil {
+			r.logger.WithField("error", err).Warn("Failed to scan track point")
+			continue
+		}
+
+		altInt := int16(0)
+		if altitude.Valid {
+			altInt = int16(altitude.Float64)
+		}
+
+		point := models.TrackGeoPoint{
+			GeoPoint: models.GeoPoint{
+				Latitude:  lat,
+				Longitude: lon,
+				Altitude:  altInt,
+			},
+			Timestamp: timestamp,
+		}
+
+		track = append(track, point)
+	}
+
+	// Реверсируем порядок, чтобы точки шли от старых к новым
+	for i := 0; i < len(track)/2; i++ {
+		j := len(track) - 1 - i
+		track[i], track[j] = track[j], track[i]
+	}
+
+	r.logger.WithFields(map[string]interface{}{
+		"device_id":    deviceID,
+		"points_count": len(track),
+	}).Debug("Retrieved pilot track with timestamps from MySQL")
+
+	return track, nil
+}
+
+// GetPilotAircraftType получает тип ЛА пилота из последней записи в треке
+func (r *MySQLRepository) GetPilotAircraftType(ctx context.Context, deviceID string) (models.PilotType, error) {
+	// Конвертируем hex device ID в int
+	addr, err := strconv.ParseInt(deviceID, 16, 32)
+	if err != nil {
+		return models.PilotTypeUnknown, fmt.Errorf("invalid device ID format: %s", deviceID)
+	}
+
+	query := `
+		SELECT ufo_type
+		FROM ufo_track
+		WHERE addr = ?
+		ORDER BY datestamp DESC
+		LIMIT 1
+	`
+
+	var aircraftType uint8
+	err = r.db.QueryRowContext(ctx, query, addr).Scan(&aircraftType)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			// Если нет записей в треке, пробуем получить из таблицы name
+			nameQuery := `
+				SELECT ufo_type
+				FROM name
+				WHERE addr = ?
+			`
+			err = r.db.QueryRowContext(ctx, nameQuery, addr).Scan(&aircraftType)
+			if err != nil {
+				r.logger.WithField("device_id", deviceID).Debug("Aircraft type not found, using default")
+				return models.PilotTypeUnknown, nil
+			}
+		} else {
+			return models.PilotTypeUnknown, fmt.Errorf("failed to query aircraft type: %w", err)
+		}
+	}
+
+	// Валидация типа
+	if aircraftType > 7 {
+		return models.PilotTypeUnknown, nil
+	}
+
+	return models.PilotType(aircraftType), nil
+}
+
 // SavePilotToHistory сохраняет данные пилота в историю (для backup)
 func (r *MySQLRepository) SavePilotToHistory(ctx context.Context, pilot *models.Pilot) error {
 	// Конвертируем hex device ID в int

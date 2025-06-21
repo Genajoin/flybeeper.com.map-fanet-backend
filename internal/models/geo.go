@@ -3,6 +3,7 @@ package models
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/mmcloughlin/geohash"
 )
@@ -157,6 +158,12 @@ func (b Bounds) MaxLat() float64 {
 // MaxLon возвращает максимальную долготу
 func (b Bounds) MaxLon() float64 {
 	return b.Northeast.Longitude
+}
+
+// TrackGeoPoint представляет географическую точку с временной меткой для треков
+type TrackGeoPoint struct {
+	GeoPoint
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // geohashStepSize возвращает приблизительный размер шага в градусах для заданной точности

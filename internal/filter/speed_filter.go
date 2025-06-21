@@ -93,7 +93,7 @@ func (f *SpeedBasedFilter) Filter(track *TrackData) (*FilterResult, error) {
 				Warn("Point filtered due to speed violation")
 			
 			point.Filtered = true
-			point.Reason = fmt.Sprintf("Speed %.1f km/h exceeds max %.1f km/h", speed, maxSpeed)
+			point.FilterReason = fmt.Sprintf("Speed %.1f km/h exceeds max %.1f km/h", speed, maxSpeed)
 			stats.SpeedViolations++
 			
 			// Не добавляем точку в результат
@@ -112,7 +112,7 @@ func (f *SpeedBasedFilter) Filter(track *TrackData) (*FilterResult, error) {
 				Warn("Point filtered due to large distance jump")
 			
 			point.Filtered = true
-			point.Reason = fmt.Sprintf("Distance jump %.1f km is too large", distance)
+			point.FilterReason = fmt.Sprintf("Distance jump %.1f km is too large", distance)
 			stats.SpeedViolations++
 			
 			continue

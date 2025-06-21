@@ -23,17 +23,24 @@ func NewFilterChain(config *FilterConfig, logger *utils.Logger) *FilterChain {
 		logger:  logger,
 	}
 
-	// Добавляем фильтры в зависимости от конфигурации
+	// Добавляем фильтры в правильном порядке
+	
+	// 1. Сначала удаляем явные выбросы (телепортации, невозможные скачки)
+	if config.EnableOutlierFilter {
+		chain.AddFilter(NewOutlierFilter(config, logger))
+	}
+	
+	// 2. На очищенных данных определяем логические сегменты
+	chain.AddFilter(NewSegmentationFilter(config, logger))
+	
+	// 3. Удаляем дубли внутри сегментов
 	if config.EnableDuplicateFilter {
 		chain.AddFilter(NewDuplicateFilter(config, logger))
 	}
 	
+	// 4. Финальная проверка скоростей
 	if config.EnableSpeedFilter {
 		chain.AddFilter(NewSpeedBasedFilter(config, logger))
-	}
-	
-	if config.EnableOutlierFilter {
-		chain.AddFilter(NewOutlierFilter(config, logger))
 	}
 
 	return chain
@@ -92,6 +99,13 @@ func (fc *FilterChain) Filter(track *TrackData) (*FilterResult, error) {
 		combinedStats.SpeedViolations += result.Statistics.SpeedViolations
 		combinedStats.Duplicates += result.Statistics.Duplicates
 		combinedStats.Outliers += result.Statistics.Outliers
+		combinedStats.Teleportations += result.Statistics.Teleportations
+		
+		// Сегменты берем только из SegmentationFilter
+		if result.Statistics.SegmentCount > 0 {
+			combinedStats.SegmentCount = result.Statistics.SegmentCount
+			combinedStats.SegmentBreaks = result.Statistics.SegmentBreaks
+		}
 		
 		if result.Statistics.MaxSpeedDetected > combinedStats.MaxSpeedDetected {
 			combinedStats.MaxSpeedDetected = result.Statistics.MaxSpeedDetected
@@ -104,7 +118,17 @@ func (fc *FilterChain) Filter(track *TrackData) (*FilterResult, error) {
 
 	// Вычисляем финальную статистику
 	finalCount := len(currentTrack.Points)
-	filteredCount := originalCount - finalCount
+	
+	// Подсчитываем отфильтрованные точки по флагу Filtered
+	actualFilteredCount := 0
+	for _, point := range currentTrack.Points {
+		if point.Filtered {
+			actualFilteredCount++
+		}
+	}
+	
+	// Используем actualFilteredCount вместо разности длин массивов
+	filteredCount := actualFilteredCount
 	
 	// Вычисляем среднюю скорость
 	if finalCount > 1 {
@@ -159,10 +183,13 @@ func (fc *FilterChain) Description() string {
 func ConvertGeoPointsToTrackData(points []models.GeoPoint, deviceID string, aircraftType models.PilotType) *TrackData {
 	trackPoints := make([]TrackPoint, len(points))
 	
+	// Создаем временные метки с интервалом 10 секунд (более реалистично для GPS)
+	baseTime := time.Now().Add(-time.Duration(len(points)) * 10 * time.Second)
+	
 	for i, point := range points {
 		trackPoints[i] = TrackPoint{
 			Position:  point,
-			Timestamp: time.Now().Add(time.Duration(i) * time.Minute), // Простая временная метка
+			Timestamp: baseTime.Add(time.Duration(i) * 10 * time.Second),
 		}
 	}
 	
@@ -184,6 +211,11 @@ func ConvertTrackDataToGeoPoints(track *TrackData) []models.GeoPoint {
 	}
 	
 	return points
+}
+
+// NewImprovedFilterChain создает улучшенную двухэтапную цепочку фильтров
+func NewImprovedFilterChain(config *FilterConfig, logger *utils.Logger) *TwoStageFilterChain {
+	return NewTwoStageFilterChain(config, logger)
 }
 
 // CalculateTrackStatistics вычисляет скорости и расстояния между точками

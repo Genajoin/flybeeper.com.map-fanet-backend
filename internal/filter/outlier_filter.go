@@ -57,7 +57,7 @@ func (f *OutlierFilter) Filter(track *TrackData) (*FilterResult, error) {
 				Debug("Point marked as outlier")
 			
 			point.Filtered = true
-			point.Reason = "Detected as statistical outlier"
+			point.FilterReason = "Detected as statistical outlier"
 			stats.Outliers++
 		} else {
 			filteredPoints = append(filteredPoints, point)
@@ -133,8 +133,16 @@ func (f *OutlierFilter) detectDistanceOutliers(points []TrackPoint) []bool {
 	median := f.calculateMedian(distances)
 	mad := f.calculateMAD(distances, median)
 	
-	// Устанавливаем порог (медиана + 3*MAD или конфигурируемый порог)
-	threshold := math.Max(median+3*mad, f.config.OutlierThresholdKm)
+	// Устанавливаем порог (медиана + 3*MAD или минимальный порог)
+	threshold := median + 3*mad
+	minThreshold := 10.0 // Минимальный порог 10 км для расстояний
+	if threshold < minThreshold {
+		threshold = minThreshold
+	}
+	// Но не больше конфигурируемого максимума
+	if threshold > f.config.OutlierThresholdKm {
+		threshold = f.config.OutlierThresholdKm
+	}
 	
 	// Помечаем точки с большими расстояниями
 	for i := 1; i < n; i++ {
@@ -189,7 +197,12 @@ func (f *OutlierFilter) detectMedianDeviationOutliers(points []TrackPoint) []boo
 	// Порог: медиана + 4*MAD (более консервативный для этого метода)
 	threshold := medianDeviation + 4*mad
 	
-	// Дополнительно учитываем конфигурируемый порог
+	// Используем максимум между вычисленным порогом и минимальным (5 км)
+	minThreshold := 5.0 // Минимальный порог 5 км
+	if threshold < minThreshold {
+		threshold = minThreshold
+	}
+	// Дополнительно учитываем конфигурируемый порог как максимум
 	if threshold > f.config.OutlierThresholdKm {
 		threshold = f.config.OutlierThresholdKm
 	}

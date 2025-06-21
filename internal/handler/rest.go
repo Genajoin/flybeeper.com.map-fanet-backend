@@ -314,7 +314,15 @@ func (h *RESTHandler) GetStations(c *gin.Context) {
 }
 
 // GetTrack возвращает трек полета пилота
-// GET /api/v1/track/{addr}?hours=12
+// GET /api/v1/track/{addr}?hours=12&format=geojson&filter-level=1
+// Параметры:
+//   - hours: количество часов истории (1-12, по умолчанию 12)
+//   - format: формат ответа (json/geojson, по умолчанию json)
+//   - filter-level: уровень фильтрации (0-3, по умолчанию 0)
+//     0 - без фильтрации (raw data)
+//     1 - базовая: дубли + телепортации >200км
+//     2 - средняя: уровень 1 + сегментация по времени (30 мин)
+//     3 - полная: двухэтапная фильтрация
 func (h *RESTHandler) GetTrack(c *gin.Context) {
 	_, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
@@ -337,8 +345,8 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		}
 	}
 
-	// Формат ответа (по умолчанию json)
-	format := c.DefaultQuery("format", "json")
+	// Формат ответа (по умолчанию geojson)
+	format := c.DefaultQuery("format", "geojson")
 	
 	// Валидация формата
 	if format != "json" && format != "geojson" {
@@ -349,9 +357,12 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
-	// Параметр фильтрации (по умолчанию true)
-	enableFilter := c.DefaultQuery("filter", "true")
-	applyFilters := enableFilter == "true" || enableFilter == "1"
+	// Уровень фильтрации (по умолчанию 0 - без фильтрации)
+	filterLevelStr := c.DefaultQuery("filter-level", "2")
+	filterLevel := 0
+	if lvl, err := strconv.Atoi(filterLevelStr); err == nil && lvl >= 0 && lvl <= 3 {
+		filterLevel = lvl
+	}
 
 	// Проверяем доступность historyRepo
 	if h.historyRepo == nil {
@@ -363,11 +374,11 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
-	// Получаем трек из MySQL базы данных
+	// Получаем трек из MySQL базы данных с временными метками
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
 	
-	track, err := h.historyRepo.GetPilotTrack(ctx, addrStr, 1000)
+	trackWithTimestamps, err := h.historyRepo.GetPilotTrackWithTimestamps(ctx, addrStr, 1000)
 	if err != nil {
 		h.logger.WithField("error", err).WithField("addr", addrStr).Error("Failed to get pilot track")
 		c.JSON(http.StatusNotFound, gin.H{
@@ -377,7 +388,7 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
-	if len(track) == 0 {
+	if len(trackWithTimestamps) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{
 			"code":    "track_empty",
 			"message": "No track data available",
@@ -395,30 +406,47 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
-	// Применяем фильтры если включены
+	// Применяем фильтры в зависимости от уровня
 	var filterResult *filter.FilterResult
-	var filteredTrack []models.GeoPoint = track
+	var filteredTrack []models.GeoPoint
 	
-	if applyFilters && len(track) > 1 {
+	if filterLevel > 0 && len(trackWithTimestamps) > 1 {
 		h.logger.WithField("device_id", addrStr).
-			WithField("original_points", len(track)).
+			WithField("original_points", len(trackWithTimestamps)).
+			WithField("filter_level", filterLevel).
 			Debug("Applying track filters")
 		
-		// Для простоты используем PilotTypeParaglider если тип неизвестен
-		// В реальности нужно получать тип из базы данных
-		aircraftType := models.PilotTypeParaglider
+		// Получаем тип ЛА из базы данных
+		aircraftType, err := h.historyRepo.GetPilotAircraftType(ctx, addrStr)
+		if err != nil {
+			h.logger.WithField("error", err).WithField("device_id", addrStr).
+				Warn("Failed to get aircraft type, using default")
+			aircraftType = models.PilotTypeUnknown
+		}
 		
-		filterResult, err = applyTrackFilters(track, addrStr, aircraftType, h.logger)
+		filterResult, err = applyTrackFiltersWithTimestamps(trackWithTimestamps, addrStr, aircraftType, filterLevel, h.logger)
 		if err != nil {
 			h.logger.WithField("error", err).WithField("device_id", addrStr).
 				Warn("Failed to apply track filters, using original data")
+			// Конвертируем в GeoPoint без фильтрации
+			filteredTrack = make([]models.GeoPoint, len(trackWithTimestamps))
+			for i, pt := range trackWithTimestamps {
+				filteredTrack[i] = pt.GeoPoint
+			}
 		} else {
 			filteredTrack = convertFilteredTrackToGeoPoints(filterResult)
 			h.logger.WithField("device_id", addrStr).
 				WithField("original_points", filterResult.OriginalCount).
 				WithField("filtered_points", filterResult.FilteredCount).
 				WithField("final_points", len(filteredTrack)).
+				WithField("filter_level", filterLevel).
 				Info("Track filters applied successfully")
+		}
+	} else {
+		// Конвертируем в GeoPoint без фильтрации
+		filteredTrack = make([]models.GeoPoint, len(trackWithTimestamps))
+		for i, pt := range trackWithTimestamps {
+			filteredTrack[i] = pt.GeoPoint
 		}
 	}
 
@@ -443,13 +471,13 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		}
 		c.Data(http.StatusOK, "application/x-protobuf", data)
 	} else if format == "geojson" {
-		if applyFilters && filterResult != nil {
+		if filterLevel > 0 && filterResult != nil {
 			c.JSON(http.StatusOK, convertTrackToGeoJSONWithFilter(response.Track, filterResult))
 		} else {
 			c.JSON(http.StatusOK, convertTrackToGeoJSON(response.Track))
 		}
 	} else {
-		if applyFilters && filterResult != nil {
+		if filterLevel > 0 && filterResult != nil {
 			c.JSON(http.StatusOK, convertTrackToJSONWithFilter(response.Track, filterResult))
 		} else {
 			c.JSON(http.StatusOK, convertTrackToJSON(response.Track))

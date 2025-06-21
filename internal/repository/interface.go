@@ -45,6 +45,8 @@ type HistoryRepository interface {
 
 	// Операции с треками
 	GetPilotTrack(ctx context.Context, deviceID string, limit int) ([]models.GeoPoint, error)
+	GetPilotTrackWithTimestamps(ctx context.Context, deviceID string, limit int) ([]models.TrackGeoPoint, error)
+	GetPilotAircraftType(ctx context.Context, deviceID string) (models.PilotType, error)
 
 	// Сохранение для backup
 	SavePilotToHistory(ctx context.Context, pilot *models.Pilot) error

@@ -291,6 +291,15 @@ func generateColorFromAddr(addr uint32) string {
 	return colors[addr%uint32(len(colors))]
 }
 
+// generateSegmentColor генерирует цвет для сегмента
+func generateSegmentColor(segmentID int) string {
+	colors := []string{
+		"#1bb12e", "#ff6b35", "#f7931e", "#c149ad", "#00b4d8",
+		"#0077b6", "#90e0ef", "#e63946", "#f77f00", "#fcbf49",
+	}
+	return colors[(segmentID-1)%len(colors)]
+}
+
 // Вспомогательные функции
 
 func protoToModelsPilots(pilots []*pb.Pilot) []*models.Pilot {
@@ -416,6 +425,24 @@ func convertGeoPointsToTrackData(points []models.GeoPoint, deviceID string, airc
 	}
 }
 
+// convertTrackGeoPointsToTrackData конвертирует MySQL данные с временными метками в формат для фильтрации
+func convertTrackGeoPointsToTrackData(points []models.TrackGeoPoint, deviceID string, aircraftType models.PilotType) *filter.TrackData {
+	trackPoints := make([]filter.TrackPoint, len(points))
+	
+	for i, point := range points {
+		trackPoints[i] = filter.TrackPoint{
+			Position:  point.GeoPoint,
+			Timestamp: point.Timestamp,
+		}
+	}
+	
+	return &filter.TrackData{
+		DeviceID:     deviceID,
+		AircraftType: aircraftType,
+		Points:       trackPoints,
+	}
+}
+
 // applyTrackFilters применяет фильтры к треку
 func applyTrackFilters(points []models.GeoPoint, deviceID string, aircraftType models.PilotType, logger *utils.Logger) (*filter.FilterResult, error) {
 	// Создаем конфигурацию фильтров
@@ -426,6 +453,43 @@ func applyTrackFilters(points []models.GeoPoint, deviceID string, aircraftType m
 	
 	// Конвертируем данные для фильтрации
 	trackData := convertGeoPointsToTrackData(points, deviceID, aircraftType)
+	
+	// Применяем фильтры
+	return filterChain.Filter(trackData)
+}
+
+// applyTrackFiltersWithTimestamps применяет фильтры к треку с временными метками
+func applyTrackFiltersWithTimestamps(points []models.TrackGeoPoint, deviceID string, aircraftType models.PilotType, filterLevel int, logger *utils.Logger) (*filter.FilterResult, error) {
+	// Создаем конфигурацию фильтров
+	config := filter.DefaultFilterConfig()
+	
+	// Конвертируем данные для фильтрации
+	trackData := convertTrackGeoPointsToTrackData(points, deviceID, aircraftType)
+	
+	// Если уровень 0 - возвращаем без фильтрации
+	if filterLevel == 0 {
+		return &filter.FilterResult{
+			OriginalCount: len(points),
+			FilteredCount: 0,
+			Points:        trackData.Points,
+			Statistics:    filter.FilterStats{},
+		}, nil
+	}
+	
+	// Выбираем цепочку фильтров в зависимости от уровня
+	var filterChain filter.TrackFilter
+	
+	switch filterLevel {
+	case 1:
+		filterChain = filter.NewLevel1FilterChain(config, logger)
+	case 2:
+		filterChain = filter.NewLevel2FilterChain(config, logger)
+	case 3:
+		filterChain = filter.NewLevel3FilterChain(config, logger)
+	default:
+		// Для неизвестных уровней используем уровень 1
+		filterChain = filter.NewLevel1FilterChain(config, logger)
+	}
 	
 	// Применяем фильтры
 	return filterChain.Filter(trackData)
@@ -446,7 +510,12 @@ func convertFilteredTrackToGeoPoints(filterResult *filter.FilterResult) []models
 
 // convertTrackToGeoJSONWithFilter создает GeoJSON с информацией о фильтрации
 func convertTrackToGeoJSONWithFilter(track *pb.Track, filterResult *filter.FilterResult) map[string]interface{} {
-	// Базовый GeoJSON
+	// Проверяем, есть ли сегменты (либо в массиве Segments, либо SegmentCount > 1)
+	if len(filterResult.Statistics.Segments) > 1 || filterResult.Statistics.SegmentCount > 1 {
+		return convertTrackToGeoJSONWithSegments(track, filterResult)
+	}
+	
+	// Базовый GeoJSON для одного сегмента
 	geoJSON := convertTrackToGeoJSON(track)
 	
 	// Добавляем статистику фильтрации в properties
@@ -469,6 +538,9 @@ func convertTrackToGeoJSONWithFilter(track *pb.Track, filterResult *filter.Filte
 		if filterResult.Statistics.Outliers > 0 {
 			properties["outliers_removed"] = filterResult.Statistics.Outliers
 		}
+		if filterResult.Statistics.Teleportations > 0 {
+			properties["teleportations_removed"] = filterResult.Statistics.Teleportations
+		}
 		if filterResult.Statistics.MaxSpeedDetected > 0 {
 			properties["max_speed_detected"] = filterResult.Statistics.MaxSpeedDetected
 		}
@@ -478,9 +550,134 @@ func convertTrackToGeoJSONWithFilter(track *pb.Track, filterResult *filter.Filte
 		if filterResult.Statistics.MaxDistanceJump > 0 {
 			properties["max_distance_jump"] = filterResult.Statistics.MaxDistanceJump
 		}
+		if filterResult.Statistics.SegmentCount > 0 {
+			properties["segment_count"] = filterResult.Statistics.SegmentCount
+		}
+		if filterResult.Statistics.SegmentBreaks > 0 {
+			properties["segment_breaks"] = filterResult.Statistics.SegmentBreaks
+		}
 	}
 	
 	return geoJSON
+}
+
+// convertTrackToGeoJSONWithSegments создает GeoJSON с MultiLineString для сегментированного трека
+func convertTrackToGeoJSONWithSegments(track *pb.Track, filterResult *filter.FilterResult) map[string]interface{} {
+	// Если нет сегментов в статистике, создаем их из точек
+	segments := filterResult.Statistics.Segments
+	if len(segments) == 0 {
+		// Группируем точки по SegmentID
+		segmentMap := make(map[int][]int)
+		for i, filterPoint := range filterResult.Points {
+			if !filterPoint.Filtered {
+				segmentID := filterPoint.SegmentID
+				if segmentID == 0 {
+					segmentID = 1 // Default segment
+				}
+				segmentMap[segmentID] = append(segmentMap[segmentID], i)
+			}
+		}
+		
+		// Создаем базовые SegmentInfo для каждого найденного сегмента
+		for segmentID, indices := range segmentMap {
+			if len(indices) > 1 {
+				segments = append(segments, filter.SegmentInfo{
+					ID:         segmentID,
+					Color:      generateSegmentColor(segmentID),
+					PointCount: len(indices),
+				})
+			}
+		}
+	}
+	
+	// Создаем features для каждого сегмента
+	features := make([]map[string]interface{}, 0, len(segments))
+	
+	// Используем информацию о сегментах
+	for _, segmentInfo := range segments {
+		// Собираем координаты для этого сегмента
+		coordinates := make([][]float64, 0)
+		
+		// Проходим по точкам и собираем координаты для сегмента
+		for _, filterPoint := range filterResult.Points {
+			// Пропускаем отфильтрованные точки
+			if filterPoint.Filtered {
+				continue
+			}
+			
+			// Проверяем, что точка принадлежит текущему сегменту
+			if filterPoint.SegmentID == segmentInfo.ID || (filterPoint.SegmentID == 0 && segmentInfo.ID == 1) {
+				// Используем позицию из filterPoint (она уже правильная)
+				coordinates = append(coordinates, []float64{
+					filterPoint.Position.Longitude,
+					filterPoint.Position.Latitude,
+				})
+			}
+		}
+		
+		// Создаем feature для сегмента
+		if len(coordinates) > 1 { // Минимум 2 точки для LineString
+			properties := map[string]interface{}{
+				"addr":       track.Addr,
+				"color":      segmentInfo.Color,
+				"segment_id": segmentInfo.ID,
+			}
+			
+			// Добавляем дополнительные свойства если они есть
+			if segmentInfo.StartTime.Unix() > 0 {
+				properties["start_time"] = segmentInfo.StartTime.Unix()
+			}
+			if segmentInfo.EndTime.Unix() > 0 {
+				properties["end_time"] = segmentInfo.EndTime.Unix()
+			}
+			if segmentInfo.Duration > 0 {
+				properties["duration_minutes"] = segmentInfo.Duration
+			}
+			if segmentInfo.Distance > 0 {
+				properties["distance_km"] = segmentInfo.Distance
+			}
+			if segmentInfo.AvgSpeed > 0 {
+				properties["avg_speed_kmh"] = segmentInfo.AvgSpeed
+			}
+			if segmentInfo.MaxSpeed > 0 {
+				properties["max_speed_kmh"] = segmentInfo.MaxSpeed
+			}
+			properties["point_count"] = len(coordinates)
+			
+			feature := map[string]interface{}{
+				"type":       "Feature",
+				"properties": properties,
+				"geometry": map[string]interface{}{
+					"type":        "LineString",
+					"coordinates": coordinates,
+				},
+			}
+			
+			features = append(features, feature)
+		}
+	}
+	
+	// GeoJSON FeatureCollection с множественными сегментами
+	return map[string]interface{}{
+		"type": "FeatureCollection",
+		"properties": map[string]interface{}{
+			"addr":              track.Addr,
+			"filter_applied":    true,
+			"original_points":   filterResult.OriginalCount,
+			"filtered_points":   filterResult.FilteredCount,
+			"final_points":      len(filterResult.Points) - filterResult.FilteredCount,
+			"segment_count":     filterResult.Statistics.SegmentCount,
+			"segment_breaks":    filterResult.Statistics.SegmentBreaks,
+			"speed_violations":     filterResult.Statistics.SpeedViolations,
+			"duplicates_removed":   filterResult.Statistics.Duplicates,
+			"outliers_removed":     filterResult.Statistics.Outliers,
+			"teleportations_removed": filterResult.Statistics.Teleportations,
+			"max_speed_detected": filterResult.Statistics.MaxSpeedDetected,
+			"avg_speed":         filterResult.Statistics.AvgSpeed,
+			"max_distance_jump": filterResult.Statistics.MaxDistanceJump,
+		},
+		"features": features,
+	}
 }
 
 // convertTrackToJSONWithFilter создает JSON с информацией о фильтрации  

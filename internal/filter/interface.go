@@ -8,12 +8,13 @@ import (
 
 // TrackPoint представляет точку трека с дополнительной информацией для фильтрации
 type TrackPoint struct {
-	Position  models.GeoPoint `json:"position"`
-	Timestamp time.Time       `json:"timestamp"`
-	Speed     float64         `json:"speed,omitempty"`     // Вычисленная скорость км/ч
-	Distance  float64         `json:"distance,omitempty"`  // Расстояние от предыдущей точки в км
-	Filtered  bool            `json:"filtered,omitempty"`  // Была ли точка отфильтрована
-	Reason    string          `json:"reason,omitempty"`    // Причина фильтрации
+	Position     models.GeoPoint `json:"position"`
+	Timestamp    time.Time       `json:"timestamp"`
+	Speed        float64         `json:"speed,omitempty"`        // Вычисленная скорость км/ч
+	Distance     float64         `json:"distance,omitempty"`     // Расстояние от предыдущей точки в км
+	Filtered     bool            `json:"filtered,omitempty"`     // Была ли точка отфильтрована
+	FilterReason string          `json:"filter_reason,omitempty"` // Причина фильтрации
+	SegmentID    int             `json:"segment_id,omitempty"`    // ID сегмента (для разрывов во времени)
 }
 
 // TrackData содержит информацию о треке для фильтрации
@@ -33,12 +34,16 @@ type FilterResult struct {
 
 // FilterStats статистика фильтрации
 type FilterStats struct {
-	SpeedViolations   int     `json:"speed_violations"`
-	Duplicates        int     `json:"duplicates"`
-	Outliers          int     `json:"outliers"`
-	MaxSpeedDetected  float64 `json:"max_speed_detected"`
-	AvgSpeed          float64 `json:"avg_speed"`
-	MaxDistanceJump   float64 `json:"max_distance_jump"`
+	SpeedViolations   int           `json:"speed_violations"`
+	Duplicates        int           `json:"duplicates"`
+	Outliers          int           `json:"outliers"`
+	Teleportations    int           `json:"teleportations,omitempty"` // Количество телепортаций
+	MaxSpeedDetected  float64       `json:"max_speed_detected"`
+	AvgSpeed          float64       `json:"avg_speed"`
+	MaxDistanceJump   float64       `json:"max_distance_jump"`
+	SegmentCount      int           `json:"segment_count,omitempty"`   // Количество сегментов
+	SegmentBreaks     int           `json:"segment_breaks,omitempty"`  // Количество разрывов
+	Segments          []SegmentInfo `json:"segments,omitempty"`        // Информация о сегментах
 }
 
 // TrackFilter интерфейс для фильтров треков

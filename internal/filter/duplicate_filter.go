@@ -96,7 +96,7 @@ func (f *DuplicateFilter) Filter(track *TrackData) (*FilterResult, error) {
 				Debug("Point filtered as duplicate")
 			
 			currentPoint.Filtered = true
-			currentPoint.Reason = reason
+			currentPoint.FilterReason = reason
 			stats.Duplicates++
 			
 			// Обновляем timestamp последней валидной точки, если новая точка новее
