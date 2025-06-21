@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/flybeeper/fanet-backend/internal/auth"
+	"github.com/flybeeper/fanet-backend/internal/filter"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/repository"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
@@ -348,6 +349,10 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
+	// Параметр фильтрации (по умолчанию true)
+	enableFilter := c.DefaultQuery("filter", "true")
+	applyFilters := enableFilter == "true" || enableFilter == "1"
+
 	// Проверяем доступность historyRepo
 	if h.historyRepo == nil {
 		h.logger.Error("MySQL repository not available")
@@ -390,10 +395,37 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
+	// Применяем фильтры если включены
+	var filterResult *filter.FilterResult
+	var filteredTrack []models.GeoPoint = track
+	
+	if applyFilters && len(track) > 1 {
+		h.logger.WithField("device_id", addrStr).
+			WithField("original_points", len(track)).
+			Debug("Applying track filters")
+		
+		// Для простоты используем PilotTypeParaglider если тип неизвестен
+		// В реальности нужно получать тип из базы данных
+		aircraftType := models.PilotTypeParaglider
+		
+		filterResult, err = applyTrackFilters(track, addrStr, aircraftType, h.logger)
+		if err != nil {
+			h.logger.WithField("error", err).WithField("device_id", addrStr).
+				Warn("Failed to apply track filters, using original data")
+		} else {
+			filteredTrack = convertFilteredTrackToGeoPoints(filterResult)
+			h.logger.WithField("device_id", addrStr).
+				WithField("original_points", filterResult.OriginalCount).
+				WithField("filtered_points", filterResult.FilteredCount).
+				WithField("final_points", len(filteredTrack)).
+				Info("Track filters applied successfully")
+		}
+	}
+
 	response := &pb.TrackResponse{
 		Track: &pb.Track{
 			Addr:      uint32(addr),
-			Points:    convertTrackToProto(track),
+			Points:    convertTrackToProto(filteredTrack),
 			StartTime: time.Now().Add(-time.Duration(hours) * time.Hour).Unix(),
 			EndTime:   time.Now().Unix(),
 		},
@@ -411,9 +443,17 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		}
 		c.Data(http.StatusOK, "application/x-protobuf", data)
 	} else if format == "geojson" {
-		c.JSON(http.StatusOK, convertTrackToGeoJSON(response.Track))
+		if applyFilters && filterResult != nil {
+			c.JSON(http.StatusOK, convertTrackToGeoJSONWithFilter(response.Track, filterResult))
+		} else {
+			c.JSON(http.StatusOK, convertTrackToGeoJSON(response.Track))
+		}
 	} else {
-		c.JSON(http.StatusOK, convertTrackToJSON(response.Track))
+		if applyFilters && filterResult != nil {
+			c.JSON(http.StatusOK, convertTrackToJSONWithFilter(response.Track, filterResult))
+		} else {
+			c.JSON(http.StatusOK, convertTrackToJSON(response.Track))
+		}
 	}
 }
 

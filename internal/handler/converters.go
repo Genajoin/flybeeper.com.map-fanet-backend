@@ -4,8 +4,10 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/flybeeper/fanet-backend/internal/filter"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
+	"github.com/flybeeper/fanet-backend/pkg/utils"
 )
 
 // Конвертеры из внутренних моделей в Protobuf
@@ -389,4 +391,128 @@ func getAircraftTypeName(t uint8) string {
 	default:
 		return "UNKNOWN"
 	}
+}
+
+// ==================== Функции для работы с фильтрами ====================
+
+// convertGeoPointsToTrackData конвертирует MySQL данные в формат для фильтрации
+func convertGeoPointsToTrackData(points []models.GeoPoint, deviceID string, aircraftType models.PilotType) *filter.TrackData {
+	trackPoints := make([]filter.TrackPoint, len(points))
+	
+	// Для простоты создаем временные метки с интервалом 1 минута
+	baseTime := time.Now().Add(-time.Duration(len(points)) * time.Minute)
+	
+	for i, point := range points {
+		trackPoints[i] = filter.TrackPoint{
+			Position:  point,
+			Timestamp: baseTime.Add(time.Duration(i) * time.Minute),
+		}
+	}
+	
+	return &filter.TrackData{
+		DeviceID:     deviceID,
+		AircraftType: aircraftType,
+		Points:       trackPoints,
+	}
+}
+
+// applyTrackFilters применяет фильтры к треку
+func applyTrackFilters(points []models.GeoPoint, deviceID string, aircraftType models.PilotType, logger *utils.Logger) (*filter.FilterResult, error) {
+	// Создаем конфигурацию фильтров
+	config := filter.DefaultFilterConfig()
+	
+	// Создаем цепочку фильтров
+	filterChain := filter.NewFilterChain(config, logger)
+	
+	// Конвертируем данные для фильтрации
+	trackData := convertGeoPointsToTrackData(points, deviceID, aircraftType)
+	
+	// Применяем фильтры
+	return filterChain.Filter(trackData)
+}
+
+// convertFilteredTrackToGeoPoints конвертирует отфильтрованный трек обратно в GeoPoint
+func convertFilteredTrackToGeoPoints(filterResult *filter.FilterResult) []models.GeoPoint {
+	points := make([]models.GeoPoint, 0, len(filterResult.Points))
+	
+	for _, trackPoint := range filterResult.Points {
+		if !trackPoint.Filtered {
+			points = append(points, trackPoint.Position)
+		}
+	}
+	
+	return points
+}
+
+// convertTrackToGeoJSONWithFilter создает GeoJSON с информацией о фильтрации
+func convertTrackToGeoJSONWithFilter(track *pb.Track, filterResult *filter.FilterResult) map[string]interface{} {
+	// Базовый GeoJSON
+	geoJSON := convertTrackToGeoJSON(track)
+	
+	// Добавляем статистику фильтрации в properties
+	if features, ok := geoJSON["features"].([]map[string]interface{}); ok && len(features) > 0 {
+		properties := features[0]["properties"].(map[string]interface{})
+		
+		// Добавляем информацию о фильтрации
+		properties["filter_applied"] = true
+		properties["original_points"] = filterResult.OriginalCount
+		properties["filtered_points"] = filterResult.FilteredCount
+		properties["final_points"] = len(filterResult.Points)
+		
+		// Статистика фильтрации
+		if filterResult.Statistics.SpeedViolations > 0 {
+			properties["speed_violations"] = filterResult.Statistics.SpeedViolations
+		}
+		if filterResult.Statistics.Duplicates > 0 {
+			properties["duplicates_removed"] = filterResult.Statistics.Duplicates
+		}
+		if filterResult.Statistics.Outliers > 0 {
+			properties["outliers_removed"] = filterResult.Statistics.Outliers
+		}
+		if filterResult.Statistics.MaxSpeedDetected > 0 {
+			properties["max_speed_detected"] = filterResult.Statistics.MaxSpeedDetected
+		}
+		if filterResult.Statistics.AvgSpeed > 0 {
+			properties["avg_speed"] = filterResult.Statistics.AvgSpeed
+		}
+		if filterResult.Statistics.MaxDistanceJump > 0 {
+			properties["max_distance_jump"] = filterResult.Statistics.MaxDistanceJump
+		}
+	}
+	
+	return geoJSON
+}
+
+// convertTrackToJSONWithFilter создает JSON с информацией о фильтрации  
+func convertTrackToJSONWithFilter(track *pb.Track, filterResult *filter.FilterResult) map[string]interface{} {
+	// Базовый JSON
+	result := convertTrackToJSON(track)
+	
+	// Добавляем информацию о фильтрации
+	trackData := result["track"].(map[string]interface{})
+	trackData["filter_applied"] = true
+	trackData["original_points"] = filterResult.OriginalCount
+	trackData["filtered_points"] = filterResult.FilteredCount
+	trackData["final_points"] = len(filterResult.Points)
+	
+	// Статистика фильтрации
+	trackData["filter_statistics"] = map[string]interface{}{
+		"speed_violations":     filterResult.Statistics.SpeedViolations,
+		"duplicates_removed":   filterResult.Statistics.Duplicates,
+		"outliers_removed":     filterResult.Statistics.Outliers,
+		"max_speed_detected":   filterResult.Statistics.MaxSpeedDetected,
+		"avg_speed":            filterResult.Statistics.AvgSpeed,
+		"max_distance_jump":    filterResult.Statistics.MaxDistanceJump,
+	}
+	
+	return result
+}
+
+// getAircraftTypeFromAircraft конвертирует uint8 в PilotType
+func getAircraftTypeFromAircraft(aircraftType uint8) models.PilotType {
+	// FANET значения напрямую соответствуют PilotType enum
+	if aircraftType <= 7 {
+		return models.PilotType(aircraftType)
+	}
+	return models.PilotTypeUnknown
 }
