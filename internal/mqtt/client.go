@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ func NewClient(cfg *config.MQTTConfig, logger *utils.Logger, handler MessageHand
 	ctx, cancel := context.WithCancel(context.Background())
 
 	parser := NewParser(logger)
+	parser.SetDebugMode(cfg.DebugEnabled)
 	
 	c := &Client{
 		config:  cfg,
@@ -170,21 +172,34 @@ func (c *Client) messageHandler() mqtt.MessageHandler {
 			topic := msg.Topic()
 			payload := msg.Payload()
 			
-			c.logger.WithFields(map[string]interface{}{
+			// Базовое логирование
+			logFields := map[string]interface{}{
 				"topic": topic,
 				"payload_size": len(payload),
 				"qos": msg.Qos(),
 				"retained": msg.Retained(),
-			}).Debug("Received MQTT message")
+			}
+			
+			// Детальное логирование с hex dump если включен debug режим
+			if c.config.DebugEnabled {
+				logFields["payload_hex"] = hex.EncodeToString(payload)
+				c.logger.WithFields(logFields).Info("Received MQTT message (DEBUG MODE)")
+			} else {
+				c.logger.WithFields(logFields).Debug("Received MQTT message")
+			}
 			
 			// Парсим FANET сообщение
 			fanetMsg, err := c.parser.Parse(topic, payload)
 			if err != nil {
-				c.logger.WithFields(map[string]interface{}{
+				errorFields := map[string]interface{}{
 					"topic": topic,
 					"error": err,
 					"payload_size": len(payload),
-				}).Error("Failed to parse FANET message")
+				}
+				if c.config.DebugEnabled {
+					errorFields["payload_hex"] = hex.EncodeToString(payload)
+				}
+				c.logger.WithFields(errorFields).Error("Failed to parse FANET message")
 				metrics.MQTTParseErrors.Inc()
 				return
 			}
@@ -205,11 +220,17 @@ func (c *Client) messageHandler() mqtt.MessageHandler {
 						"error": err,
 					}).Error("Message handler failed")
 				} else {
-					c.logger.WithFields(map[string]interface{}{
+					successFields := map[string]interface{}{
 						"topic": topic,
 						"message_type": fanetMsg.Type,
 						"device_id": fanetMsg.DeviceID,
-					}).Debug("Successfully processed FANET message")
+					}
+					if c.config.DebugEnabled {
+						successFields["timestamp"] = fanetMsg.Timestamp
+						successFields["rssi"] = fanetMsg.RSSI
+						successFields["snr"] = fanetMsg.SNR
+					}
+					c.logger.WithFields(successFields).Debug("Successfully processed FANET message")
 					// Увеличиваем счетчик по типу пакета
 					packetType := fmt.Sprintf("%d", fanetMsg.Type)
 					metrics.MQTTMessagesReceived.WithLabelValues(packetType).Inc()

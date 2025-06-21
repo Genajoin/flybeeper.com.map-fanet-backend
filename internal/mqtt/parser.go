@@ -2,6 +2,7 @@ package mqtt
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"math"
 	"strings"
@@ -93,14 +94,21 @@ type NewHWInfoData struct {
 
 // Parser парсер FANET сообщений
 type Parser struct {
-	logger *utils.Logger
+	logger       *utils.Logger
+	debugEnabled bool
 }
 
 // NewParser создает новый парсер FANET сообщений
 func NewParser(logger *utils.Logger) *Parser {
 	return &Parser{
-		logger: logger,
+		logger:       logger,
+		debugEnabled: false, // Будет установлено через SetDebugMode
 	}
+}
+
+// SetDebugMode включает/выключает детальное логирование парсинга
+func (p *Parser) SetDebugMode(enabled bool) {
+	p.debugEnabled = enabled
 }
 
 // Parse парсит MQTT сообщение и извлекает FANET данные
@@ -235,6 +243,11 @@ func (p *Parser) parseAirTracking(data []byte) (*AirTrackingData, error) {
 		return nil, fmt.Errorf("air tracking data too short: %d bytes", len(data))
 	}
 	
+	if p.debugEnabled {
+		p.logger.WithField("raw_data_hex", hex.EncodeToString(data)).
+			Info("Parsing Air Tracking data (DEBUG)")
+	}
+	
 	// Координаты (3 + 3 байта) - согласно спецификации
 	// Latitude: deg * 93206.04, signed 24-bit
 	latRaw := int32(data[0]) | int32(data[1])<<8 | int32(data[2])<<16
@@ -249,6 +262,17 @@ func (p *Parser) parseAirTracking(data []byte) (*AirTrackingData, error) {
 		lonRaw |= -16777216  // 0xFF000000 как отрицательное int32
 	}
 	longitude := float64(lonRaw) / 46603.02
+	
+	if p.debugEnabled {
+		p.logger.WithFields(map[string]interface{}{
+			"lat_raw": latRaw,
+			"lon_raw": lonRaw,
+			"lat_bytes": hex.EncodeToString(data[0:3]),
+			"lon_bytes": hex.EncodeToString(data[3:6]),
+			"latitude": latitude,
+			"longitude": longitude,
+		}).Info("Parsed coordinates (DEBUG)")
+	}
 	
 	// Alt_status (2 байта) - биты 6-7
 	altStatus := binary.LittleEndian.Uint16(data[6:8])
@@ -265,6 +289,18 @@ func (p *Parser) parseAirTracking(data []byte) (*AirTrackingData, error) {
 		altitude = altRaw * 4
 	} else {
 		altitude = altRaw
+	}
+	
+	if p.debugEnabled {
+		p.logger.WithFields(map[string]interface{}{
+			"alt_status_raw": altStatus,
+			"alt_status_hex": hex.EncodeToString(data[6:8]),
+			"online_tracking": onlineTracking,
+			"aircraft_type": aircraftType,
+			"alt_scale": altScale,
+			"alt_raw": altRaw,
+			"altitude_final": altitude,
+		}).Info("Parsed altitude status (DEBUG)")
 	}
 	
 	// Скорость (1 байт) - байт 8
@@ -309,6 +345,36 @@ func (p *Parser) parseAirTracking(data []byte) (*AirTrackingData, error) {
 		ClimbRate:      climbRate,
 		AircraftType:   aircraftType,   // Извлечено из alt_status bits 14-12
 		OnlineTracking: onlineTracking, // Извлечено из alt_status bit 15
+	}
+	
+	if p.debugEnabled {
+		p.logger.WithFields(map[string]interface{}{
+			"speed_raw": speedRaw,
+			"speed_scale": speedScale,
+			"speed_final": speed,
+			"climb_raw": climbRaw,
+			"climb_scale": climbScale,
+			"climb_val_signed": climbVal,
+			"climb_final": climbRate,
+			"heading_raw": headingRaw,
+			"heading_final": heading,
+		}).Info("Parsed speed/climb/heading (DEBUG)")
+		
+		// Валидация координат
+		if latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180 {
+			p.logger.WithFields(map[string]interface{}{
+				"latitude": latitude,
+				"longitude": longitude,
+			}).Warn("Invalid coordinates detected!")
+		} else {
+			p.logger.WithFields(map[string]interface{}{
+				"latitude": latitude,
+				"longitude": longitude,
+				"altitude": altitude,
+				"device_type": aircraftType,
+				"online": onlineTracking,
+			}).Info("Valid Air Tracking data parsed successfully (DEBUG)")
+		}
 	}
 	
 	return tracking, nil

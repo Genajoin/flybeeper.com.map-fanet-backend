@@ -168,6 +168,21 @@ var (
 			Help: "Total number of active ground stations in the system",
 		},
 	)
+
+	// Database connection status
+	MySQLConnectionStatus = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "fanet_mysql_connection_status",
+			Help: "MySQL connection status (1 = connected, 0 = disconnected)",
+		},
+	)
+
+	RedisConnectionStatus = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "fanet_redis_connection_status",
+			Help: "Redis connection status (1 = connected, 0 = disconnected)",
+		},
+	)
 )
 
 // SetAppInfo устанавливает информацию о версии приложения

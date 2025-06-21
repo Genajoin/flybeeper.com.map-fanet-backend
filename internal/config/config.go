@@ -48,6 +48,7 @@ type MQTTConfig struct {
 	CleanSession bool
 	OrderMatters bool
 	TopicPrefix  string
+	DebugEnabled bool
 }
 
 // MySQLConfig конфигурация MySQL (backup)
@@ -117,6 +118,7 @@ func Load() (*Config, error) {
 			CleanSession: getBool("MQTT_CLEAN_SESSION", false),
 			OrderMatters: getBool("MQTT_ORDER_MATTERS", false),
 			TopicPrefix:  getEnv("MQTT_TOPIC_PREFIX", "fb/b/+/f/#"),
+			DebugEnabled: getBool("MQTT_DEBUG", false),
 		},
 		MySQL: MySQLConfig{
 			DSN:          getEnv("MYSQL_DSN", ""),

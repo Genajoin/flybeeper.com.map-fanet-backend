@@ -11,6 +11,7 @@ import (
 
 	"github.com/flybeeper/fanet-backend/internal/config"
 	"github.com/flybeeper/fanet-backend/internal/handler"
+	"github.com/flybeeper/fanet-backend/internal/metrics"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/mqtt"
 	"github.com/flybeeper/fanet-backend/internal/service"
@@ -32,7 +33,7 @@ func main() {
 	}
 
 	// Инициализируем логирование
-	logger := utils.NewLogger("info", "text")
+	logger := utils.NewLogger(config.LogLevel(), config.LogFormat())
 	logger.WithField("version", Version).Info("Starting FANET Backend")
 
 	// Создаем контекст приложения
@@ -48,8 +49,10 @@ func main() {
 
 	// Проверяем соединение с Redis
 	if err := redisRepo.Ping(ctx); err != nil {
+		metrics.RedisConnectionStatus.Set(0)
 		logger.WithField("error", err).Fatal("Failed to connect to Redis")
 	}
+	metrics.RedisConnectionStatus.Set(1)
 	logger.Info("Connected to Redis")
 
 	// Инициализируем MySQL репозиторий (опционально)
@@ -62,8 +65,10 @@ func main() {
 		} else {
 			defer mysqlRepo.Close()
 			if err := mysqlRepo.Ping(ctx); err != nil {
+				metrics.MySQLConnectionStatus.Set(0)
 				logger.WithField("error", err).Warn("Failed to connect to MySQL")
 			} else {
+				metrics.MySQLConnectionStatus.Set(1)
 				logger.Info("Connected to MySQL")
 				
 				// Инициализируем batch writer для высокопроизводительной записи
@@ -89,29 +94,55 @@ func main() {
 		switch msg.Type {
 		case 1: // Air tracking
 			if pilot := convertFANETToPilot(msg); pilot != nil {
+				// Логируем начало обработки пилота
+				logger.WithFields(map[string]interface{}{
+					"device_id": pilot.DeviceID,
+					"latitude": pilot.Position.Latitude,
+					"longitude": pilot.Position.Longitude,
+					"altitude": pilot.Position.Altitude,
+					"aircraft_type": pilot.AircraftType,
+					"online": pilot.TrackOnline,
+				}).Debug("Processing pilot data")
+				
 				// Сохраняем в Redis (синхронно - критично для производительности)
 				if err := redisRepo.SavePilot(ctx, pilot); err != nil {
+					logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
+						Error("Failed to save pilot to Redis")
 					return err
 				}
+				
+				logger.WithField("device_id", pilot.DeviceID).Debug("Successfully saved pilot to Redis")
 				
 				// Асинхронно добавляем в MySQL batch queue (неблокирующая операция)
 				if batchWriter != nil {
 					if err := batchWriter.QueuePilot(pilot); err != nil {
 						logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
 							Warn("Failed to queue pilot for MySQL batch")
+					} else {
+						logger.WithField("device_id", pilot.DeviceID).Debug("Queued pilot for MySQL batch")
 					}
 				}
 				
 				// Транслируем через WebSocket
 				pbPilot := convertPilotToProtobuf(pilot)
 				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_PILOT, pb.Action_ACTION_UPDATE, pbPilot)
+				logger.WithField("device_id", pilot.DeviceID).Debug("Broadcasted pilot update via WebSocket")
+			} else {
+				logger.WithField("fanet_type", msg.Type).Warn("Failed to convert FANET message to pilot model")
 			}
 		case 2: // Name update
 			if nameUpdate := convertFANETToNameUpdate(msg); nameUpdate != nil {
+				logger.WithFields(map[string]interface{}{
+					"device_id": nameUpdate.DeviceID,
+					"name": nameUpdate.Name,
+				}).Debug("Processing name update")
+				
 				// Обновляем имя пилота в Redis
 				if err := redisRepo.UpdatePilotName(ctx, nameUpdate.DeviceID, nameUpdate.Name); err != nil {
 					logger.WithField("error", err).WithField("device_id", nameUpdate.DeviceID).
-						Warn("Failed to update pilot name in Redis")
+						Error("Failed to update pilot name in Redis")
+				} else {
+					logger.WithField("device_id", nameUpdate.DeviceID).Debug("Successfully updated pilot name in Redis")
 				}
 				
 				// Асинхронно обновляем в MySQL через batch
@@ -124,47 +155,87 @@ func main() {
 					if err := batchWriter.QueuePilot(pilot); err != nil {
 						logger.WithField("error", err).WithField("device_id", nameUpdate.DeviceID).
 							Warn("Failed to queue name update for MySQL batch")
+					} else {
+						logger.WithField("device_id", nameUpdate.DeviceID).Debug("Queued name update for MySQL batch")
 					}
 				}
+			} else {
+				logger.WithField("fanet_type", msg.Type).Warn("Failed to convert FANET message to name update")
 			}
 		case 9: // Thermal
 			if thermal := convertFANETToThermal(msg); thermal != nil {
+				logger.WithFields(map[string]interface{}{
+					"thermal_id": thermal.ID,
+					"reported_by": thermal.ReportedBy,
+					"latitude": thermal.Center.Latitude,
+					"longitude": thermal.Center.Longitude,
+					"quality": thermal.Quality,
+				}).Debug("Processing thermal data")
+				
 				// Сохраняем в Redis
 				if err := redisRepo.SaveThermal(ctx, thermal); err != nil {
+					logger.WithField("error", err).WithField("thermal_id", thermal.ID).
+						Error("Failed to save thermal to Redis")
 					return err
 				}
+				
+				logger.WithField("thermal_id", thermal.ID).Debug("Successfully saved thermal to Redis")
 				
 				// Асинхронно добавляем в MySQL batch queue
 				if batchWriter != nil {
 					if err := batchWriter.QueueThermal(thermal); err != nil {
 						logger.WithField("error", err).WithField("thermal_id", thermal.ID).
 							Warn("Failed to queue thermal for MySQL batch")
+					} else {
+						logger.WithField("thermal_id", thermal.ID).Debug("Queued thermal for MySQL batch")
 					}
 				}
 				
 				// Транслируем через WebSocket
 				pbThermal := convertThermalToProtobuf(thermal)
 				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_THERMAL, pb.Action_ACTION_ADD, pbThermal)
+				logger.WithField("thermal_id", thermal.ID).Debug("Broadcasted thermal update via WebSocket")
+			} else {
+				logger.WithField("fanet_type", msg.Type).Warn("Failed to convert FANET message to thermal model")
 			}
 		case 4: // Weather/Station
 			if station := convertFANETToStation(msg); station != nil {
+				logger.WithFields(map[string]interface{}{
+					"station_id": station.ID,
+					"latitude": station.Position.Latitude,
+					"longitude": station.Position.Longitude,
+					"temperature": station.Temperature,
+					"pressure": station.Pressure,
+				}).Debug("Processing station data")
+				
 				// Сохраняем в Redis
 				if err := redisRepo.SaveStation(ctx, station); err != nil {
+					logger.WithField("error", err).WithField("station_id", station.ID).
+						Error("Failed to save station to Redis")
 					return err
 				}
+				
+				logger.WithField("station_id", station.ID).Debug("Successfully saved station to Redis")
 				
 				// Асинхронно добавляем в MySQL batch queue
 				if batchWriter != nil {
 					if err := batchWriter.QueueStation(station); err != nil {
 						logger.WithField("error", err).WithField("station_id", station.ID).
 							Warn("Failed to queue station for MySQL batch")
+					} else {
+						logger.WithField("station_id", station.ID).Debug("Queued station for MySQL batch")
 					}
 				}
 				
 				// Транслируем через WebSocket
 				pbStation := convertStationToProtobuf(station)
 				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_STATION, pb.Action_ACTION_UPDATE, pbStation)
+				logger.WithField("station_id", station.ID).Debug("Broadcasted station update via WebSocket")
+			} else {
+				logger.WithField("fanet_type", msg.Type).Warn("Failed to convert FANET message to station model")
 			}
+		default:
+			logger.WithField("fanet_type", msg.Type).Debug("Unhandled FANET message type")
 		}
 		return nil
 	}
@@ -285,6 +356,7 @@ func convertFANETToPilot(msg *mqtt.FANETMessage) *models.Pilot {
 		DeviceID:     msg.DeviceID,
 		Name:         "", // Имя приходит в отдельном сообщении Type 2
 		AircraftType: airData.AircraftType,
+		Type:         models.PilotType(airData.AircraftType), // Устанавливаем правильный тип
 		Position: &models.GeoPoint{
 			Latitude:  airData.Latitude,
 			Longitude: airData.Longitude,
@@ -379,7 +451,7 @@ func convertPilotToProtobuf(pilot *models.Pilot) *pb.Pilot {
 	return &pb.Pilot{
 		Addr: 0, // TODO: конвертировать DeviceID в uint32
 		Name: pilot.Name,
-		Type: pb.PilotType(pilot.AircraftType),
+		Type: fanetAircraftTypeToProtobuf(pilot.AircraftType),
 		Position: &pb.GeoPoint{
 			Latitude:  pilot.Position.Latitude,
 			Longitude: pilot.Position.Longitude,
@@ -392,6 +464,18 @@ func convertPilotToProtobuf(pilot *models.Pilot) *pb.Pilot {
 		TrackOnline: pilot.TrackOnline,
 		Battery:    uint32(pilot.Battery),
 	}
+}
+
+// fanetAircraftTypeToProtobuf конвертирует FANET тип ЛА в protobuf enum
+func fanetAircraftTypeToProtobuf(fanetType uint8) pb.PilotType {
+	// После исправления protobuf enum, значения теперь точно соответствуют FANET спецификации
+	// FANET: 0=Other, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
+	// Protobuf: 0=UNKNOWN, 1=PARAGLIDER, 2=HANGGLIDER, 3=BALLOON, 4=GLIDER, 5=POWERED, 6=HELICOPTER, 7=UAV
+	
+	if fanetType <= 7 {
+		return pb.PilotType(fanetType)  // Прямое соответствие
+	}
+	return pb.PilotType_PILOT_TYPE_UNKNOWN  // Неизвестный тип
 }
 
 func convertThermalToProtobuf(thermal *models.Thermal) *pb.Thermal {

@@ -676,6 +676,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 	if typeStr, ok := data["type"]; ok {
 		if t, err := strconv.Atoi(typeStr); err == nil {
 			pilot.AircraftType = uint8(t)
+			pilot.Type = models.PilotType(t) // Устанавливаем и Type тоже
 		}
 	}
 

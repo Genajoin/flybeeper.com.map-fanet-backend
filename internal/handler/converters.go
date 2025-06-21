@@ -41,24 +41,12 @@ func convertPilotToProto(pilot *models.Pilot) *pb.Pilot {
 }
 
 func convertAircraftTypeToProto(t uint8) pb.PilotType {
-	switch t {
-	case 1:
-		return pb.PilotType_PILOT_TYPE_PARAGLIDER
-	case 2:
-		return pb.PilotType_PILOT_TYPE_HANGGLIDER
-	case 3:
-		return pb.PilotType_PILOT_TYPE_GLIDER
-	case 4:
-		return pb.PilotType_PILOT_TYPE_POWERED
-	case 5:
-		return pb.PilotType_PILOT_TYPE_HELICOPTER
-	case 6:
-		return pb.PilotType_PILOT_TYPE_UAV
-	case 7:
-		return pb.PilotType_PILOT_TYPE_BALLOON
-	default:
-		return pb.PilotType_PILOT_TYPE_UNKNOWN
+	// FANET спецификация: 0=Other, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
+	// Protobuf enum теперь соответствует FANET значениям напрямую
+	if t <= 7 {
+		return pb.PilotType(t)
 	}
+	return pb.PilotType_PILOT_TYPE_UNKNOWN
 }
 
 func convertThermalsToProto(thermals []*models.Thermal) []*pb.Thermal {
@@ -333,42 +321,29 @@ func formatAddr(addr uint32) string {
 }
 
 func protoToAircraftType(t pb.PilotType) uint8 {
-	switch t {
-	case pb.PilotType_PILOT_TYPE_PARAGLIDER:
-		return 1
-	case pb.PilotType_PILOT_TYPE_HANGGLIDER:
-		return 2
-	case pb.PilotType_PILOT_TYPE_GLIDER:
-		return 3
-	case pb.PilotType_PILOT_TYPE_POWERED:
-		return 4
-	case pb.PilotType_PILOT_TYPE_HELICOPTER:
-		return 5
-	case pb.PilotType_PILOT_TYPE_UAV:
-		return 6
-	case pb.PilotType_PILOT_TYPE_BALLOON:
-		return 7
-	default:
-		return 0
-	}
+	// Protobuf enum теперь соответствует FANET значениям напрямую
+	return uint8(t)
 }
 
 func getAircraftTypeName(t uint8) string {
+	// FANET спецификация: 0=Other, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
 	switch t {
+	case 0:
+		return "UNKNOWN"
 	case 1:
 		return "PARAGLIDER"
 	case 2:
 		return "HANGGLIDER"
 	case 3:
-		return "GLIDER"
-	case 4:
-		return "POWERED"
-	case 5:
-		return "HELICOPTER"
-	case 6:
-		return "UAV"
-	case 7:
 		return "BALLOON"
+	case 4:
+		return "GLIDER"
+	case 5:
+		return "POWERED"      // ← ИСПРАВЛЕНО!
+	case 6:
+		return "HELICOPTER"   // ← ИСПРАВЛЕНО!
+	case 7:
+		return "UAV"
 	default:
 		return "UNKNOWN"
 	}
