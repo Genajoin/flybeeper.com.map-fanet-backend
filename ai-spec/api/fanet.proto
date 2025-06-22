@@ -25,11 +25,11 @@ enum PilotType {
   PILOT_TYPE_UNKNOWN = 0;
   PILOT_TYPE_PARAGLIDER = 1;    // Параплан
   PILOT_TYPE_HANGGLIDER = 2;    // Дельтаплан
-  PILOT_TYPE_GLIDER = 3;        // Планер
-  PILOT_TYPE_POWERED = 4;       // Мотопараплан
-  PILOT_TYPE_HELICOPTER = 5;    // Вертолет
-  PILOT_TYPE_UAV = 6;           // Дрон
-  PILOT_TYPE_BALLOON = 7;       // Воздушный шар
+  PILOT_TYPE_BALLOON = 3;       // Воздушный шар
+  PILOT_TYPE_GLIDER = 4;        // Планер
+  PILOT_TYPE_POWERED = 5;       // Мотопараплан
+  PILOT_TYPE_HELICOPTER = 6;    // Вертолет
+  PILOT_TYPE_UAV = 7;           // Дрон
 }
 
 // Пилот/UFO

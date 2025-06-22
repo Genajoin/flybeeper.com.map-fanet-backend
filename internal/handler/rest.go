@@ -564,7 +564,7 @@ func (h *RESTHandler) PostPosition(c *gin.Context) {
 	pilot := &models.Pilot{
 		DeviceID:     fmt.Sprintf("user_%d", userID), // Используем user ID как FANET адрес
 		Name:         user.Name,
-		AircraftType: uint8(models.PilotTypeParaglider), // По умолчанию
+		Type: models.PilotTypeParaglider, // По умолчанию
 		Position: &models.GeoPoint{
 			Latitude:  request.Position.Latitude,
 			Longitude: request.Position.Longitude,

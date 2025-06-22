@@ -171,7 +171,7 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	pilotKey := PilotPrefix + pilot.DeviceID
 	pipe.HSet(ctx, pilotKey, map[string]interface{}{
 		"name":         pilot.Name,
-		"type":         pilot.AircraftType,
+		"type":         pilot.Type,
 		"altitude":     pilot.Position.Altitude,
 		"speed":        pilot.Speed,
 		"climb":        pilot.ClimbRate,
@@ -675,8 +675,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 
 	if typeStr, ok := data["type"]; ok {
 		if t, err := strconv.Atoi(typeStr); err == nil {
-			pilot.AircraftType = uint8(t)
-			pilot.Type = models.PilotType(t) // Устанавливаем и Type тоже
+			pilot.Type = models.PilotType(t)
 		}
 	}
 

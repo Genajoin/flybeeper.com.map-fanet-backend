@@ -27,7 +27,7 @@ func convertPilotToProto(pilot *models.Pilot) *pb.Pilot {
 	return &pb.Pilot{
 		Addr: uint32(addr),
 		Name: pilot.Name,
-		Type: convertAircraftTypeToProto(pilot.AircraftType),
+		Type: pb.PilotType(pilot.Type), // Используем pilot.Type вместо pilot.AircraftType
 		Position: &pb.GeoPoint{
 			Latitude:  pilot.Position.Latitude,
 			Longitude: pilot.Position.Longitude,
@@ -42,14 +42,6 @@ func convertPilotToProto(pilot *models.Pilot) *pb.Pilot {
 	}
 }
 
-func convertAircraftTypeToProto(t uint8) pb.PilotType {
-	// FANET спецификация: 0=Other, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
-	// Protobuf enum теперь соответствует FANET значениям напрямую
-	if t <= 7 {
-		return pb.PilotType(t)
-	}
-	return pb.PilotType_PILOT_TYPE_UNKNOWN
-}
 
 func convertThermalsToProto(thermals []*models.Thermal) []*pb.Thermal {
 	result := make([]*pb.Thermal, len(thermals))
@@ -152,7 +144,7 @@ func convertPilotToJSON(pilot *models.Pilot) map[string]interface{} {
 	return map[string]interface{}{
 		"addr": addr,
 		"name": pilot.Name,
-		"type": getAircraftTypeName(pilot.AircraftType),
+		"type": getAircraftTypeName(uint8(pilot.Type)), // Используем pilot.Type
 		"position": map[string]interface{}{
 			"latitude":  pilot.Position.Latitude,
 			"longitude": pilot.Position.Longitude,
@@ -304,7 +296,7 @@ func protoToModelsPilots(pilots []*pb.Pilot) []*models.Pilot {
 		result[i] = &models.Pilot{
 			DeviceID:     formatAddr(pilot.Addr),
 			Name:         pilot.Name,
-			AircraftType: protoToAircraftType(pilot.Type),
+			Type:         models.PilotType(pilot.Type),
 			Position: &models.GeoPoint{
 				Latitude:  pilot.Position.Latitude,
 				Longitude: pilot.Position.Longitude,
@@ -369,13 +361,9 @@ func formatAddr(addr uint32) string {
 	return strconv.FormatUint(uint64(addr), 16)
 }
 
-func protoToAircraftType(t pb.PilotType) uint8 {
-	// Protobuf enum теперь соответствует FANET значениям напрямую
-	return uint8(t)
-}
 
 func getAircraftTypeName(t uint8) string {
-	// FANET спецификация: 0=Other, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
+	// FANET спецификация: 0=Unknown, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
 	switch t {
 	case 0:
 		return "UNKNOWN"
@@ -388,9 +376,9 @@ func getAircraftTypeName(t uint8) string {
 	case 4:
 		return "GLIDER"
 	case 5:
-		return "POWERED"      // ← ИСПРАВЛЕНО!
+		return "POWERED"
 	case 6:
-		return "HELICOPTER"   // ← ИСПРАВЛЕНО!
+		return "HELICOPTER"
 	case 7:
 		return "UAV"
 	default:

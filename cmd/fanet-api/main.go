@@ -100,7 +100,7 @@ func main() {
 					"latitude": pilot.Position.Latitude,
 					"longitude": pilot.Position.Longitude,
 					"altitude": pilot.Position.Altitude,
-					"aircraft_type": pilot.AircraftType,
+					"aircraft_type": pilot.Type,
 					"online": pilot.TrackOnline,
 				}).Debug("Processing pilot data")
 				
@@ -355,8 +355,7 @@ func convertFANETToPilot(msg *mqtt.FANETMessage) *models.Pilot {
 	return &models.Pilot{
 		DeviceID:     msg.DeviceID,
 		Name:         "", // Имя приходит в отдельном сообщении Type 2
-		AircraftType: airData.AircraftType,
-		Type:         models.PilotType(airData.AircraftType), // Устанавливаем правильный тип
+		Type:         models.PilotType(airData.AircraftType),
 		Position: &models.GeoPoint{
 			Latitude:  airData.Latitude,
 			Longitude: airData.Longitude,
@@ -451,7 +450,7 @@ func convertPilotToProtobuf(pilot *models.Pilot) *pb.Pilot {
 	return &pb.Pilot{
 		Addr: 0, // TODO: конвертировать DeviceID в uint32
 		Name: pilot.Name,
-		Type: fanetAircraftTypeToProtobuf(pilot.AircraftType),
+		Type: pb.PilotType(pilot.Type),
 		Position: &pb.GeoPoint{
 			Latitude:  pilot.Position.Latitude,
 			Longitude: pilot.Position.Longitude,
@@ -466,17 +465,6 @@ func convertPilotToProtobuf(pilot *models.Pilot) *pb.Pilot {
 	}
 }
 
-// fanetAircraftTypeToProtobuf конвертирует FANET тип ЛА в protobuf enum
-func fanetAircraftTypeToProtobuf(fanetType uint8) pb.PilotType {
-	// После исправления protobuf enum, значения теперь точно соответствуют FANET спецификации
-	// FANET: 0=Other, 1=Paraglider, 2=Hangglider, 3=Balloon, 4=Glider, 5=Powered, 6=Helicopter, 7=UAV
-	// Protobuf: 0=UNKNOWN, 1=PARAGLIDER, 2=HANGGLIDER, 3=BALLOON, 4=GLIDER, 5=POWERED, 6=HELICOPTER, 7=UAV
-	
-	if fanetType <= 7 {
-		return pb.PilotType(fanetType)  // Прямое соответствие
-	}
-	return pb.PilotType_PILOT_TYPE_UNKNOWN  // Неизвестный тип
-}
 
 func convertThermalToProtobuf(thermal *models.Thermal) *pb.Thermal {
 	return &pb.Thermal{

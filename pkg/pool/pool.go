@@ -121,7 +121,6 @@ func (p *ObjectPools) PutPilot(pilot *models.Pilot) {
 	pilot.Address = ""
 	pilot.Name = ""
 	pilot.Type = 0
-	pilot.AircraftType = 0
 	pilot.Altitude = 0
 	pilot.Speed = 0
 	pilot.ClimbRate = 0

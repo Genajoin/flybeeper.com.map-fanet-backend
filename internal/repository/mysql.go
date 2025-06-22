@@ -118,7 +118,7 @@ func (r *MySQLRepository) LoadInitialPilots(ctx context.Context, limit int) ([]*
 		pilot := &models.Pilot{
 			DeviceID:     fmt.Sprintf("%06X", addr),
 			Name:         name,
-			AircraftType: uint8(aircraftType),
+			Type: models.PilotType(aircraftType),
 			Position: &models.GeoPoint{
 				Latitude:  lat,
 				Longitude: lon,
@@ -506,7 +506,7 @@ func (r *MySQLRepository) SavePilotToHistory(ctx context.Context, pilot *models.
 	`
 
 	result, err := tx.ExecContext(ctx, insertTrackQuery,
-		addr, pilot.AircraftType, pilot.Position.Latitude, pilot.Position.Longitude,
+		addr, pilot.Type, pilot.Position.Latitude, pilot.Position.Longitude,
 		pilot.Position.Altitude, pilot.Speed, pilot.ClimbRate, pilot.Heading,
 		pilot.TrackOnline, pilot.LastUpdate)
 	if err != nil {
@@ -625,7 +625,7 @@ func (r *MySQLRepository) SavePilotsBatch(ctx context.Context, pilots []*models.
 		}
 
 		trackArgs = append(trackArgs,
-			addr, pilot.AircraftType, pilot.Position.Latitude, pilot.Position.Longitude,
+			addr, pilot.Type, pilot.Position.Latitude, pilot.Position.Longitude,
 			pilot.Position.Altitude, pilot.Speed, pilot.ClimbRate, pilot.Heading,
 			pilot.TrackOnline, pilot.LastUpdate)
 		validPilots++

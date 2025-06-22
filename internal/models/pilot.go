@@ -43,6 +43,20 @@ func (t PilotType) String() string {
 	}
 }
 
+// MarshalBinary реализует encoding.BinaryMarshaler для Redis
+func (t PilotType) MarshalBinary() ([]byte, error) {
+	return []byte{uint8(t)}, nil
+}
+
+// UnmarshalBinary реализует encoding.BinaryUnmarshaler для Redis
+func (t *PilotType) UnmarshalBinary(data []byte) error {
+	if len(data) != 1 {
+		return fmt.Errorf("invalid data length for PilotType: %d", len(data))
+	}
+	*t = PilotType(data[0])
+	return nil
+}
+
 // Pilot представляет летающий объект
 type Pilot struct {
 	// Идентификация
@@ -50,7 +64,6 @@ type Pilot struct {
 	Address      string    `json:"address"`            // FANET адрес (алиас для DeviceID)
 	Name         string    `json:"name,omitempty"`     // Имя пилота
 	Type         PilotType `json:"type"`               // Тип летательного аппарата
-	AircraftType uint8     `json:"aircraft_type"`      // Тип летательного аппарата (legacy)
 
 	// Позиция
 	Position *GeoPoint `json:"position"` // Текущие координаты
