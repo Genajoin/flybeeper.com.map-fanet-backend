@@ -8,7 +8,7 @@ info:
     email: support@flybeeper.com
 
 servers:
-  - url: https://fanet-api.flybeeper.com/v1
+  - url: https://fanet-api.flybeeper.com/api/v1
     description: Production server
   - url: http://localhost:8090/api/v1
     description: Local development

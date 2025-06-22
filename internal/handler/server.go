@@ -42,7 +42,7 @@ func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repos
 	// Middleware
 	router.Use(LoggerMiddleware(logger))
 	router.Use(gin.Recovery())
-	router.Use(CORSMiddleware())
+	router.Use(CORSMiddleware(cfg.CORS))
 	router.Use(RateLimitMiddleware())
 	router.Use(CompressionMiddleware())
 	router.Use(SecurityHeadersMiddleware())
@@ -202,9 +202,9 @@ func LoggerMiddleware(logger *utils.Logger) gin.HandlerFunc {
 }
 
 // CORSMiddleware настройка CORS
-func CORSMiddleware() gin.HandlerFunc {
+func CORSMiddleware(corsConfig config.CORSConfig) gin.HandlerFunc {
 	return cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // В production указать конкретные домены
+		AllowOrigins:     corsConfig.AllowedOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"*"},
 		ExposeHeaders:    []string{"Content-Length"},

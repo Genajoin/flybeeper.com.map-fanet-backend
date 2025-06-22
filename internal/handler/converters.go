@@ -42,6 +42,31 @@ func convertPilotToProto(pilot *models.Pilot) *pb.Pilot {
 	}
 }
 
+func convertGroundObjectsToProto(groundObjects []*models.GroundObject) []*pb.GroundObject {
+	result := make([]*pb.GroundObject, len(groundObjects))
+	for i, obj := range groundObjects {
+		result[i] = convertGroundObjectToProto(obj)
+	}
+	return result
+}
+
+func convertGroundObjectToProto(groundObject *models.GroundObject) *pb.GroundObject {
+	// Конвертируем DeviceID из hex string в uint32
+	addr, _ := strconv.ParseUint(groundObject.DeviceID, 16, 32)
+
+	return &pb.GroundObject{
+		Addr: uint32(addr),
+		Name: groundObject.Name,
+		Type: pb.GroundType(groundObject.Type),
+		Position: &pb.GeoPoint{
+			Latitude:  groundObject.Position.Latitude,
+			Longitude: groundObject.Position.Longitude,
+		},
+		TrackOnline: groundObject.TrackOnline,
+		LastUpdate:  groundObject.LastUpdate.Unix(),
+	}
+}
+
 
 func convertThermalsToProto(thermals []*models.Thermal) []*pb.Thermal {
 	result := make([]*pb.Thermal, len(thermals))
@@ -123,10 +148,11 @@ func convertTrackToProto(points []models.GeoPoint) []*pb.TrackPoint {
 
 func convertSnapshotToJSON(response *pb.SnapshotResponse) map[string]interface{} {
 	return map[string]interface{}{
-		"pilots":   convertPilotsToJSONArray(protoToModelsPilots(response.Pilots)),
-		"thermals": convertThermalsToJSONArray(protoToModelsThermals(response.Thermals)),
-		"stations": convertStationsToJSONArray(protoToModelsStations(response.Stations)),
-		"sequence": response.Sequence,
+		"pilots":         convertPilotsToJSONArray(protoToModelsPilots(response.Pilots)),
+		"ground_objects": convertGroundObjectsToJSONArray(protoToModelsGroundObjects(response.GroundObjects)),
+		"thermals":       convertThermalsToJSONArray(protoToModelsThermals(response.Thermals)),
+		"stations":       convertStationsToJSONArray(protoToModelsStations(response.Stations)),
+		"sequence":       response.Sequence,
 	}
 }
 
@@ -156,6 +182,30 @@ func convertPilotToJSON(pilot *models.Pilot) map[string]interface{} {
 		"last_update":  pilot.LastUpdate.Unix(),
 		"track_online": pilot.TrackOnline,
 		"battery":      pilot.Battery,
+	}
+}
+
+func convertGroundObjectsToJSONArray(groundObjects []*models.GroundObject) []map[string]interface{} {
+	result := make([]map[string]interface{}, len(groundObjects))
+	for i, obj := range groundObjects {
+		result[i] = convertGroundObjectToJSON(obj)
+	}
+	return result
+}
+
+func convertGroundObjectToJSON(groundObject *models.GroundObject) map[string]interface{} {
+	addr, _ := strconv.ParseUint(groundObject.DeviceID, 16, 32)
+	
+	return map[string]interface{}{
+		"addr": addr,
+		"name": groundObject.Name,
+		"type": getGroundTypeName(uint8(groundObject.Type)),
+		"position": map[string]interface{}{
+			"latitude":  groundObject.Position.Latitude,
+			"longitude": groundObject.Position.Longitude,
+		},
+		"last_update":  groundObject.LastUpdate.Unix(),
+		"track_online": groundObject.TrackOnline,
 	}
 }
 
@@ -713,4 +763,52 @@ func getAircraftTypeFromAircraft(aircraftType uint8) models.PilotType {
 		return models.PilotType(aircraftType)
 	}
 	return models.PilotTypeUnknown
+}
+
+func protoToModelsGroundObjects(groundObjects []*pb.GroundObject) []*models.GroundObject {
+	result := make([]*models.GroundObject, len(groundObjects))
+	for i, obj := range groundObjects {
+		result[i] = &models.GroundObject{
+			DeviceID:     formatAddr(obj.Addr),
+			Name:         obj.Name,
+			Type:         models.GroundType(obj.Type),
+			Position: &models.GeoPoint{
+				Latitude:  obj.Position.Latitude,
+				Longitude: obj.Position.Longitude,
+			},
+			TrackOnline: obj.TrackOnline,
+			LastUpdate:  time.Unix(obj.LastUpdate, 0),
+		}
+	}
+	return result
+}
+
+func getGroundTypeName(t uint8) string {
+	// FANET спецификация для наземных объектов
+	switch t {
+	case 0:
+		return "OTHER"
+	case 1:
+		return "WALKING"
+	case 2:
+		return "VEHICLE"
+	case 3:
+		return "BIKE"
+	case 4:
+		return "BOOT"
+	case 8:
+		return "NEED_RIDE"
+	case 9:
+		return "LANDED_WELL"
+	case 12:
+		return "NEED_TECHNICAL_SUPPORT"
+	case 13:
+		return "NEED_MEDICAL_HELP"
+	case 14:
+		return "DISTRESS_CALL"
+	case 15:
+		return "DISTRESS_CALL_AUTO"
+	default:
+		return "OTHER"
+	}
 }

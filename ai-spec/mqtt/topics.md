@@ -56,12 +56,12 @@ fb/s/{service}/metrics - Метрики
 Бинарный формат:
 
 ```
-Offset | Size | Description
--------|------|-------------
-0      | 4    | Timestamp (Unix time, little-endian)
-4      | 2    | RSSI (уровень сигнала, signed)
-6      | 2    | SNR (Signal-to-Noise Ratio, signed)
-8      | N    | Raw FANET packet data
+| Offset | Size | Description                          |
+| ------ | ---- | ------------------------------------ |
+| 0      | 4    | Timestamp (Unix time, little-endian) |
+| 4      | 2    | RSSI (уровень сигнала, signed)       |
+| 6      | 2    | SNR (Signal-to-Noise Ratio, signed)  |
+| 8      | N    | Raw FANET packet data                |
 ```
 
 ### FANET packet structure
@@ -130,7 +130,7 @@ Subtype 1: Battery only
 ### Type 7: Ground Tracking (наземный объект)
 
 ```
-Payload: Same as Type 1 but for ground vehicles
+Payload: см. message-format.md
 ```
 
 ### Type 9: Thermal

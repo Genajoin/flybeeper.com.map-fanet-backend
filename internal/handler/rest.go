@@ -37,7 +37,7 @@ func NewRESTHandler(repo repository.Repository, historyRepo repository.HistoryRe
 }
 
 // GetSnapshot возвращает начальный снимок всех объектов в радиусе
-// GET /api/v1/snapshot?lat=46.5&lon=15.6&radius=200
+// GET /api/v1/snapshot?lat=46.5&lon=15.6&radius=200&air-types=1,2,5&ground-types=1,2,4
 func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
@@ -75,6 +75,34 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		Longitude: lon,
 	}
 
+	// Парсинг параметра air-types (опционально)
+	var filterAirTypes []models.PilotType
+	airTypesParam := c.Query("air-types")
+	if airTypesParam != "" {
+		filterAirTypes, err = parseAirTypes(airTypesParam)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "invalid_air_types",
+				"message": err.Error(),
+			})
+			return
+		}
+	}
+
+	// Парсинг параметра ground-types (опционально)
+	var filterGroundTypes []models.GroundType
+	groundTypesParam := c.Query("ground-types")
+	if groundTypesParam != "" {
+		filterGroundTypes, err = parseGroundTypes(groundTypesParam)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "invalid_ground_types",
+				"message": err.Error(),
+			})
+			return
+		}
+	}
+
 	// Получаем данные из репозитория
 	pilots, err := h.repo.GetPilotsInRadius(ctx, center, float64(radius))
 	if err != nil {
@@ -86,6 +114,21 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		return
 	}
 
+	// Фильтруем пилотов по типам, если указан параметр air-types
+	if len(filterAirTypes) > 0 {
+		filtered := make([]*models.Pilot, 0, len(pilots))
+		typeMap := make(map[models.PilotType]bool)
+		for _, t := range filterAirTypes {
+			typeMap[t] = true
+		}
+		for _, pilot := range pilots {
+			if typeMap[pilot.Type] {
+				filtered = append(filtered, pilot)
+			}
+		}
+		pilots = filtered
+	}
+
 	thermals, err := h.repo.GetThermalsInRadius(ctx, center, float64(radius))
 	if err != nil {
 		h.logger.WithField("error", err).Error("Failed to get thermals")
@@ -94,6 +137,34 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 			"message": "Failed to retrieve thermals",
 		})
 		return
+	}
+
+	// Получаем наземные объекты (пока используем пустой слайс, так как репозиторий еще не реализован)
+	var groundObjects []*models.GroundObject
+	// TODO: Реализовать GetGroundObjectsInRadius в репозитории
+	// groundObjects, err := h.repo.GetGroundObjectsInRadius(ctx, center, float64(radius))
+	// if err != nil {
+	//     h.logger.WithField("error", err).Error("Failed to get ground objects")
+	//     c.JSON(http.StatusInternalServerError, gin.H{
+	//         "code":    "internal_error",
+	//         "message": "Failed to retrieve ground objects",
+	//     })
+	//     return
+	// }
+
+	// Фильтруем наземные объекты по типам, если указан параметр ground-types
+	if len(filterGroundTypes) > 0 && len(groundObjects) > 0 {
+		filtered := make([]*models.GroundObject, 0, len(groundObjects))
+		typeMap := make(map[models.GroundType]bool)
+		for _, t := range filterGroundTypes {
+			typeMap[t] = true
+		}
+		for _, obj := range groundObjects {
+			if typeMap[obj.Type] {
+				filtered = append(filtered, obj)
+			}
+		}
+		groundObjects = filtered
 	}
 
 	// Для snapshot получаем все станции, не только в радиусе
@@ -110,10 +181,11 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 
 	// Создаем Protobuf ответ
 	response := &pb.SnapshotResponse{
-		Pilots:   convertPilotsToProto(pilots),
-		Thermals: convertThermalsToProto(thermals),
-		Stations: convertStationsToProto(stations),
-		Sequence: uint64(time.Now().Unix()), // Простая последовательность
+		Pilots:        convertPilotsToProto(pilots),
+		GroundObjects: convertGroundObjectsToProto(groundObjects),
+		Thermals:      convertThermalsToProto(thermals),
+		Stations:      convertStationsToProto(stations),
+		Sequence:      uint64(time.Now().Unix()), // Простая последовательность
 	}
 
 	// Определяем формат ответа по Accept header
@@ -136,14 +208,22 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		c.JSON(http.StatusOK, convertSnapshotToJSON(response))
 	}
 
-	h.logger.WithFields(map[string]interface{}{
-		"lat":      lat,
-		"lon":      lon,
-		"radius":   radius,
-		"pilots":   len(pilots),
-		"thermals": len(thermals),
-		"stations": len(stations),
-	}).Info("Snapshot request completed")
+	logFields := map[string]interface{}{
+		"lat":            lat,
+		"lon":            lon,
+		"radius":         radius,
+		"pilots":         len(pilots),
+		"ground_objects": len(groundObjects),
+		"thermals":       len(thermals),
+		"stations":       len(stations),
+	}
+	if len(filterAirTypes) > 0 {
+		logFields["filter_air_types"] = filterAirTypes
+	}
+	if len(filterGroundTypes) > 0 {
+		logFields["filter_ground_types"] = filterGroundTypes
+	}
+	h.logger.WithFields(logFields).Info("Snapshot request completed")
 }
 
 // GetPilots возвращает пилотов в указанных границах
@@ -663,4 +743,75 @@ func boundsToRadiusQuery(bounds *models.Bounds) (models.GeoPoint, float64) {
 	radius := center.DistanceTo(bounds.Northeast)
 
 	return center, radius
+}
+
+func parseAirTypes(typesStr string) ([]models.PilotType, error) {
+	if typesStr == "" {
+		return nil, nil
+	}
+
+	typeStrings := strings.Split(typesStr, ",")
+	types := make([]models.PilotType, 0, len(typeStrings))
+
+	for _, typeStr := range typeStrings {
+		typeStr = strings.TrimSpace(typeStr)
+		if typeStr == "" {
+			continue
+		}
+
+		typeInt, err := strconv.Atoi(typeStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid aircraft type: %s", typeStr)
+		}
+
+		if typeInt < 0 || typeInt > 7 {
+			return nil, fmt.Errorf("aircraft type must be between 0 and 7, got: %d", typeInt)
+		}
+
+		types = append(types, models.PilotType(typeInt))
+	}
+
+	if len(types) == 0 {
+		return nil, fmt.Errorf("no valid aircraft types specified")
+	}
+
+	return types, nil
+}
+
+func parseGroundTypes(typesStr string) ([]models.GroundType, error) {
+	if typesStr == "" {
+		return nil, nil
+	}
+
+	typeStrings := strings.Split(typesStr, ",")
+	types := make([]models.GroundType, 0, len(typeStrings))
+
+	validGroundTypes := map[int]bool{
+		0: true, 1: true, 2: true, 3: true, 4: true,
+		8: true, 9: true, 12: true, 13: true, 14: true, 15: true,
+	}
+
+	for _, typeStr := range typeStrings {
+		typeStr = strings.TrimSpace(typeStr)
+		if typeStr == "" {
+			continue
+		}
+
+		typeInt, err := strconv.Atoi(typeStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid ground type: %s", typeStr)
+		}
+
+		if !validGroundTypes[typeInt] {
+			return nil, fmt.Errorf("ground type must be one of [0,1,2,3,4,8,9,12,13,14,15], got: %d", typeInt)
+		}
+
+		types = append(types, models.GroundType(typeInt))
+	}
+
+	if len(types) == 0 {
+		return nil, fmt.Errorf("no valid ground types specified")
+	}
+
+	return types, nil
 }

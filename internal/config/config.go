@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -15,6 +16,7 @@ type Config struct {
 	MQTT        MQTTConfig
 	MySQL       MySQLConfig
 	Auth        AuthConfig
+	CORS        CORSConfig
 	Geo         GeoConfig
 	Performance PerformanceConfig
 	Monitoring  MonitoringConfig
@@ -62,6 +64,11 @@ type MySQLConfig struct {
 type AuthConfig struct {
 	Endpoint string
 	CacheTTL time.Duration
+}
+
+// CORSConfig конфигурация CORS
+type CORSConfig struct {
+	AllowedOrigins []string
 }
 
 // GeoConfig конфигурация геопространственных настроек
@@ -128,6 +135,13 @@ func Load() (*Config, error) {
 		Auth: AuthConfig{
 			Endpoint: getEnv("AUTH_ENDPOINT", "https://api.flybeeper.com/api/v4/user"),
 			CacheTTL: getDuration("AUTH_CACHE_TTL", 5*time.Minute),
+		},
+		CORS: CORSConfig{
+			AllowedOrigins: getStringSlice("CORS_ALLOWED_ORIGINS", []string{
+				"https://testmaps.flybeeper.com",
+				"https://maps.flybeeper.com",
+				"http://localhost:3000",
+			}),
 		},
 		Geo: GeoConfig{
 			DefaultRadiusKM:  getInt("DEFAULT_RADIUS_KM", 200),
@@ -228,6 +242,23 @@ func getDuration(key string, defaultValue time.Duration) time.Duration {
 	if value := os.Getenv(key); value != "" {
 		if duration, err := time.ParseDuration(value); err == nil {
 			return duration
+		}
+	}
+	return defaultValue
+}
+
+func getStringSlice(key string, defaultValue []string) []string {
+	if value := os.Getenv(key); value != "" {
+		// Парсим строку через запятую и удаляем пробелы
+		parts := strings.Split(value, ",")
+		result := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				result = append(result, trimmed)
+			}
+		}
+		if len(result) > 0 {
+			return result
 		}
 	}
 	return defaultValue

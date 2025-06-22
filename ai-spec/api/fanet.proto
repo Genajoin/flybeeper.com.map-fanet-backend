@@ -32,6 +32,21 @@ enum PilotType {
   PILOT_TYPE_UAV = 7;           // Дрон
 }
 
+// Тип наземного объекта (согласно FANET спецификации)
+enum GroundType {
+  GROUND_TYPE_OTHER = 0;                    // Другое
+  GROUND_TYPE_WALKING = 1;                  // Пешеход
+  GROUND_TYPE_VEHICLE = 2;                  // Транспортное средство  
+  GROUND_TYPE_BIKE = 3;                     // Велосипед
+  GROUND_TYPE_BOOT = 4;                     // Лодка
+  GROUND_TYPE_NEED_RIDE = 8;                // Нужна помощь с транспортом
+  GROUND_TYPE_LANDED_WELL = 9;              // Успешная посадка
+  GROUND_TYPE_NEED_TECHNICAL_SUPPORT = 12;  // Нужна техническая помощь
+  GROUND_TYPE_NEED_MEDICAL_HELP = 13;       // Нужна медицинская помощь
+  GROUND_TYPE_DISTRESS_CALL = 14;           // Сигнал бедствия
+  GROUND_TYPE_DISTRESS_CALL_AUTO = 15;      // Автоматический сигнал бедствия
+}
+
 // Пилот/UFO
 message Pilot {
   // Идентификация
@@ -52,6 +67,21 @@ message Pilot {
   int64 last_update = 9;   // Unix timestamp
   bool track_online = 10;  // Онлайн трекинг
   uint32 battery = 11;     // Заряд батареи (%)
+}
+
+// Наземный объект (FANET Type 7)
+message GroundObject {
+  // Идентификация
+  uint32 addr = 1;         // FANET адрес
+  string name = 2;         // Название объекта (из Type 2)
+  GroundType type = 3;     // Тип наземного объекта
+  
+  // Позиция
+  GeoPoint position = 4;   // Текущие координаты
+  
+  // Статус
+  bool track_online = 5;   // Онлайн трекинг
+  int64 last_update = 6;   // Unix timestamp
 }
 
 // Термический поток
@@ -125,10 +155,11 @@ message SnapshotRequest {
 
 // Ответ с начальным снимком
 message SnapshotResponse {
-  repeated Pilot pilots = 1;      // Пилоты в регионе
-  repeated Thermal thermals = 2;  // Термики
-  repeated Station stations = 3;  // Метеостанции
-  uint64 sequence = 4;           // Номер последовательности
+  repeated Pilot pilots = 1;             // Пилоты в регионе
+  repeated GroundObject ground_objects = 2;  // Наземные объекты
+  repeated Thermal thermals = 3;         // Термики
+  repeated Station stations = 4;         // Метеостанции
+  uint64 sequence = 5;                  // Номер последовательности
 }
 
 // Запрос пилотов в регионе
@@ -139,6 +170,16 @@ message PilotsRequest {
 // Ответ со списком пилотов
 message PilotsResponse {
   repeated Pilot pilots = 1;
+}
+
+// Запрос наземных объектов
+message GroundObjectsRequest {
+  Bounds bounds = 1;       // Географические границы
+}
+
+// Ответ со списком наземных объектов
+message GroundObjectsResponse {
+  repeated GroundObject ground_objects = 1;
 }
 
 // Запрос термиков
@@ -194,8 +235,9 @@ message PositionResponse {
 // Тип обновления
 enum UpdateType {
   UPDATE_TYPE_PILOT = 0;
-  UPDATE_TYPE_THERMAL = 1;
-  UPDATE_TYPE_STATION = 2;
+  UPDATE_TYPE_GROUND_OBJECT = 1;
+  UPDATE_TYPE_THERMAL = 2;
+  UPDATE_TYPE_STATION = 3;
 }
 
 // Действие
@@ -209,7 +251,7 @@ enum Action {
 message Update {
   UpdateType type = 1;     // Тип обновления
   Action action = 2;       // Действие
-  bytes data = 3;          // Protobuf данные (Pilot/Thermal/Station)
+  bytes data = 3;          // Protobuf данные (Pilot/GroundObject/Thermal/Station)
   uint64 sequence = 4;     // Номер последовательности
 }
 

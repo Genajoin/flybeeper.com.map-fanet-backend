@@ -184,9 +184,43 @@ struct ServiceData {
 **Payload:** Команды конфигурации устройства
 
 ### Type 7: Ground Tracking  
-**Интервал**: 1-10 секунд  
+**Интервал**: floor((#neighbors/10 + 1) * 5s)  
 
-**Payload:** Идентичен Type 1, но для наземного транспорта
+**Payload:**
+```c
+struct GroundTrackingData {
+    uint8_t  header;           // Заголовок
+    uint24_t source_addr;      // Адрес источника (little-endian)
+    int24_t  latitude;         // Широта (little-endian, 2-complement)
+    int24_t  longitude;        // Долгота (little-endian, 2-complement)
+    uint8_t  type_status;      // Тип объекта + статус
+} __attribute__((packed));
+```
+
+**Декодирование координат:**
+```go
+// Координаты в градусах (те же коэффициенты что и Type 1)
+latitude := float64(lat_raw) / 93206.04
+longitude := float64(lon_raw) / 46603.02
+```
+
+**Byte 6 (type_status) битовые поля:**
+- Bits 7-4: Тип наземного объекта (0-15)
+- Bits 3-1: Зарезервировано
+- Bit 0: Online Tracking flag (1=online, 0=replay)
+
+**Типы наземных объектов:**
+- 0: Other (Другое)
+- 1: Walking (Пешеход) 
+- 2: Vehicle (Транспортное средство)
+- 3: Bike (Велосипед)
+- 4: Boot (Лодка)
+- 8: Need a ride (Нужна помощь с транспортом)
+- 9: Landed well (Успешная посадка)
+- 12: Need technical support (Нужна техническая помощь)
+- 13: Need medical help (Нужна медицинская помощь)
+- 14: Distress call (Сигнал бедствия)
+- 15: Distress call automatically (Автоматический сигнал бедствия)
 
 ### Type 8: Hardware Info (deprecated)
 **Интервал**: При запуске  
