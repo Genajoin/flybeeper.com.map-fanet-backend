@@ -44,8 +44,24 @@ func NewLevel2FilterChain(config *FilterConfig, logger *utils.Logger) *FilterCha
 }
 
 // NewLevel3FilterChain создает полную цепочку фильтров (уровень 3)
-// Использует двухэтапную фильтрацию
+// Применяет Level 2 фильтрацию и дополнительно сегментирует по активности (скорости)
 func NewLevel3FilterChain(config *FilterConfig, logger *utils.Logger) TrackFilter {
-	// Используем существующую двухэтапную фильтрацию
-	return NewImprovedFilterChain(config, logger)
+	chain := &FilterChain{
+		filters: make([]TrackFilter, 0),
+		config:  config,
+		logger:  logger,
+	}
+	
+	// 1. Сначала применяем уровень 2 (предочистка + временная сегментация + level 1 к сегментам)
+	level2Chain := NewLevel2FilterChain(config, logger)
+	
+	// Добавляем все фильтры из уровня 2
+	for _, filter := range level2Chain.filters {
+		chain.AddFilter(filter)
+	}
+	
+	// 2. Дополнительно разбиваем по активности (пешеход vs полет)
+	chain.AddFilter(NewActivitySegmentationFilter(config, logger))
+	
+	return chain
 }

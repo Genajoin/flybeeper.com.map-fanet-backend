@@ -101,10 +101,11 @@ func (fc *FilterChain) Filter(track *TrackData) (*FilterResult, error) {
 		combinedStats.Outliers += result.Statistics.Outliers
 		combinedStats.Teleportations += result.Statistics.Teleportations
 		
-		// Сегменты берем только из SegmentationFilter
+		// Сегменты берем из последнего фильтра который их создал
 		if result.Statistics.SegmentCount > 0 {
 			combinedStats.SegmentCount = result.Statistics.SegmentCount
 			combinedStats.SegmentBreaks = result.Statistics.SegmentBreaks
+			combinedStats.Segments = result.Statistics.Segments
 		}
 		
 		if result.Statistics.MaxSpeedDetected > combinedStats.MaxSpeedDetected {

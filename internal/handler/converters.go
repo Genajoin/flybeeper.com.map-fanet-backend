@@ -632,7 +632,7 @@ func convertTrackToGeoJSONWithSegments(track *pb.Track, filterResult *filter.Fil
 		if len(coordinates) > 1 { // Минимум 2 точки для LineString
 			properties := map[string]interface{}{
 				"addr":       track.Addr,
-				"color":      segmentInfo.Color,
+				"color":      generateSegmentColor(segmentInfo.AvgSpeed),
 				"segment_id": segmentInfo.ID,
 			}
 			

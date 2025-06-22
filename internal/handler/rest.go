@@ -357,8 +357,8 @@ func (h *RESTHandler) GetTrack(c *gin.Context) {
 		return
 	}
 
-	// Уровень фильтрации (по умолчанию 0 - без фильтрации)
-	filterLevelStr := c.DefaultQuery("filter-level", "2")
+	// Уровень фильтрации (по умолчанию 2 - средний)
+	filterLevelStr := c.DefaultQuery("filter-level", "3")
 	filterLevel := 0
 	if lvl, err := strconv.Atoi(filterLevelStr); err == nil && lvl >= 0 && lvl <= 3 {
 		filterLevel = lvl
