@@ -648,7 +648,7 @@ func (h *RESTHandler) PostPosition(c *gin.Context) {
 		Position: &models.GeoPoint{
 			Latitude:  request.Position.Latitude,
 			Longitude: request.Position.Longitude,
-			Altitude:  int16(request.Altitude),
+			Altitude:  request.Altitude,
 		},
 		Speed:      float32(request.Speed),
 		ClimbRate:  int16(request.Climb * 10), // Конвертируем м/с в дециметры/с

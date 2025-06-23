@@ -31,8 +31,8 @@ func convertPilotToProto(pilot *models.Pilot) *pb.Pilot {
 		Position: &pb.GeoPoint{
 			Latitude:  pilot.Position.Latitude,
 			Longitude: pilot.Position.Longitude,
+			Altitude:  pilot.Position.Altitude,
 		},
-		Altitude:    int32(pilot.Position.Altitude),
 		Speed:       float32(pilot.Speed),
 		Climb:       float32(pilot.ClimbRate) / 10, // ClimbRate в 0.1 м/с -> м/с
 		Course:      float32(pilot.Heading),
@@ -85,10 +85,10 @@ func convertThermalToProto(thermal *models.Thermal) *pb.Thermal {
 		Id:   id,
 		Addr: uint32(addr),
 		Position: &pb.GeoPoint{
-			Latitude:  thermal.Center.Latitude,
-			Longitude: thermal.Center.Longitude,
+			Latitude:  thermal.Position.Latitude,
+			Longitude: thermal.Position.Longitude,
+			Altitude:  thermal.Position.Altitude,
 		},
-		Altitude:    thermal.Altitude,
 		Quality:     uint32(thermal.Quality),
 		Climb:       float32(thermal.ClimbRate) / 10, // ClimbRate в 0.1 м/с -> м/с
 		WindSpeed:   float32(thermal.WindSpeed) / 3.6, // км/ч -> м/с
@@ -134,8 +134,8 @@ func convertTrackToProto(points []models.GeoPoint) []*pb.TrackPoint {
 			Position: &pb.GeoPoint{
 				Latitude:  point.Latitude,
 				Longitude: point.Longitude,
+				Altitude:  point.Altitude,
 			},
-			Altitude:  int32(point.Altitude),
 			Speed:     0, // Не сохраняется в текущей схеме
 			Climb:     0, // Не сохраняется в текущей схеме
 			Timestamp: time.Now().Unix(), // Приблизительное время
@@ -225,10 +225,10 @@ func convertThermalToJSON(thermal *models.Thermal) map[string]interface{} {
 		"id":   id,
 		"addr": addr,
 		"position": map[string]interface{}{
-			"latitude":  thermal.Center.Latitude,
-			"longitude": thermal.Center.Longitude,
+			"latitude":  thermal.Position.Latitude,
+			"longitude": thermal.Position.Longitude,
+			"altitude":  thermal.Position.Altitude,
 		},
-		"altitude":     thermal.Altitude,
 		"quality":      thermal.Quality,
 		"climb":        float32(thermal.ClimbRate) / 10,
 		"wind_speed":   float32(thermal.WindSpeed) / 3.6,
@@ -274,7 +274,7 @@ func convertTrackToJSON(track *pb.Track) map[string]interface{} {
 				"latitude":  point.Position.Latitude,
 				"longitude": point.Position.Longitude,
 			},
-			"altitude":  point.Altitude,
+			"altitude":  point.Position.Altitude,
 			"speed":     point.Speed,
 			"climb":     point.Climb,
 			"timestamp": point.Timestamp,
@@ -350,7 +350,7 @@ func protoToModelsPilots(pilots []*pb.Pilot) []*models.Pilot {
 			Position: &models.GeoPoint{
 				Latitude:  pilot.Position.Latitude,
 				Longitude: pilot.Position.Longitude,
-				Altitude:  int16(pilot.Altitude),
+				Altitude:  pilot.Position.Altitude,
 			},
 			Speed:       float32(pilot.Speed),
 			ClimbRate:   int16(pilot.Climb * 10),
@@ -369,11 +369,11 @@ func protoToModelsThermals(thermals []*pb.Thermal) []*models.Thermal {
 		result[i] = &models.Thermal{
 			ID:         strconv.FormatUint(thermal.Id, 10),
 			ReportedBy: formatAddr(thermal.Addr),
-			Center: models.GeoPoint{
+			Position: &models.GeoPoint{
 				Latitude:  thermal.Position.Latitude,
 				Longitude: thermal.Position.Longitude,
+				Altitude: thermal.Position.Altitude,
 			},
-			Altitude:      thermal.Altitude,
 			Quality:       int32(thermal.Quality),
 			ClimbRate:     float32(thermal.Climb),
 			WindSpeed:     uint8(thermal.WindSpeed * 3.6),

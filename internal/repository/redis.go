@@ -172,7 +172,7 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	pipe.HSet(ctx, pilotKey, map[string]interface{}{
 		"name":         pilot.Name,
 		"type":         uint8(pilot.Type), // Явно конвертируем PilotType в uint8 для Redis
-		"altitude":     pilot.Altitude,
+		"altitude":     pilot.Position.Altitude,
 		"speed":        pilot.Speed,
 		"climb":        pilot.ClimbRate,
 		"course":       pilot.Heading,
@@ -405,37 +405,37 @@ func (r *RedisRepository) SaveThermal(ctx context.Context, thermal *models.Therm
 
 	// Сохраняем в геопространственный индекс только если координаты валидны
 	// Redis GEO ограничения: lat [-85.05112878, 85.05112878], lon [-180, 180]
-	if thermal.Center.Latitude != 0 && thermal.Center.Longitude != 0 &&
-		thermal.Center.Latitude >= -85.05112878 && thermal.Center.Latitude <= 85.05112878 &&
-		thermal.Center.Longitude >= -180 && thermal.Center.Longitude <= 180 &&
-		!math.IsNaN(thermal.Center.Latitude) && !math.IsNaN(thermal.Center.Longitude) &&
-		!math.IsInf(thermal.Center.Latitude, 0) && !math.IsInf(thermal.Center.Longitude, 0) {
+	if thermal.Position.Latitude != 0 && thermal.Position.Longitude != 0 &&
+		thermal.Position.Latitude >= -85.05112878 && thermal.Position.Latitude <= 85.05112878 &&
+		thermal.Position.Longitude >= -180 && thermal.Position.Longitude <= 180 &&
+		!math.IsNaN(thermal.Position.Latitude) && !math.IsNaN(thermal.Position.Longitude) &&
+		!math.IsInf(thermal.Position.Latitude, 0) && !math.IsInf(thermal.Position.Longitude, 0) {
 		
 		pipe.GeoAdd(ctx, ThermalsGeoKey, &redis.GeoLocation{
 			Name:      thermal.ID,
-			Latitude:  thermal.Center.Latitude,
-			Longitude: thermal.Center.Longitude,
+			Latitude:  thermal.Position.Latitude,
+			Longitude: thermal.Position.Longitude,
 		})
 	} else {
 		// Детальная диагностика проблем с координатами термика
 		var reason string
-		if thermal.Center.Latitude == 0 && thermal.Center.Longitude == 0 {
+		if thermal.Position.Latitude == 0 && thermal.Position.Longitude == 0 {
 			reason = "coordinates are zero"
-		} else if thermal.Center.Latitude < -85.05112878 || thermal.Center.Latitude > 85.05112878 {
-			reason = fmt.Sprintf("latitude out of Redis GEO range [-85.05112878, 85.05112878]: %f", thermal.Center.Latitude)
-		} else if thermal.Center.Longitude < -180 || thermal.Center.Longitude > 180 {
-			reason = fmt.Sprintf("longitude out of range [-180, 180]: %f", thermal.Center.Longitude)
-		} else if math.IsNaN(thermal.Center.Latitude) || math.IsNaN(thermal.Center.Longitude) {
+		} else if thermal.Position.Latitude < -85.05112878 || thermal.Position.Latitude > 85.05112878 {
+			reason = fmt.Sprintf("latitude out of Redis GEO range [-85.05112878, 85.05112878]: %f", thermal.Position.Latitude)
+		} else if thermal.Position.Longitude < -180 || thermal.Position.Longitude > 180 {
+			reason = fmt.Sprintf("longitude out of range [-180, 180]: %f", thermal.Position.Longitude)
+		} else if math.IsNaN(thermal.Position.Latitude) || math.IsNaN(thermal.Position.Longitude) {
 			reason = "coordinates contain NaN values"
-		} else if math.IsInf(thermal.Center.Latitude, 0) || math.IsInf(thermal.Center.Longitude, 0) {
+		} else if math.IsInf(thermal.Position.Latitude, 0) || math.IsInf(thermal.Position.Longitude, 0) {
 			reason = "coordinates contain Inf values"
 		} else {
 			reason = "unknown validation failure"
 		}
 		
 		r.logger.WithField("thermal_id", thermal.ID).
-			WithField("lat", thermal.Center.Latitude).
-			WithField("lon", thermal.Center.Longitude).
+			WithField("lat", thermal.Position.Latitude).
+			WithField("lon", thermal.Position.Longitude).
 			WithField("reason", reason).
 			Warn("Skipping GEO indexing for thermal with invalid coordinates")
 	}
@@ -455,7 +455,7 @@ func (r *RedisRepository) SaveThermal(ctx context.Context, thermal *models.Therm
 		return fmt.Errorf("failed to save thermal: %w", err)
 	}
 
-	r.logger.WithField("thermal_id", thermal.ID).WithField("lat", thermal.Center.Latitude).WithField("lon", thermal.Center.Longitude).Debug("Saved thermal to Redis")
+	r.logger.WithField("thermal_id", thermal.ID).WithField("lat", thermal.Position.Latitude).WithField("lon", thermal.Position.Longitude).Debug("Saved thermal to Redis")
 
 	// Записываем метрики
 	duration := time.Since(start).Seconds()
@@ -736,7 +736,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 
 	if altStr, ok := data["altitude"]; ok {
 		if alt, err := strconv.Atoi(altStr); err == nil {
-			pilot.Altitude = int32(alt)
+			pilot.Position.Altitude = int32(alt)
 		}
 	}
 
@@ -787,7 +787,7 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string, location *redis.GeoLocation) (*models.Thermal, error) {
 	thermal := &models.Thermal{
 		ID: thermalID,
-		Center: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  location.Latitude,
 			Longitude: location.Longitude,
 		},
@@ -801,7 +801,7 @@ func (r *RedisRepository) mapToThermal(thermalID string, data map[string]string,
 
 	if altStr, ok := data["altitude"]; ok {
 		if alt, err := strconv.Atoi(altStr); err == nil {
-			thermal.Altitude = int32(alt)
+			thermal.Position.Altitude = int32(alt)
 		}
 	}
 

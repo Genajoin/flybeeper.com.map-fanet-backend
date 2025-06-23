@@ -240,8 +240,8 @@ func main() {
 				logger.WithFields(map[string]interface{}{
 					"thermal_id": thermal.ID,
 					"reported_by": thermal.ReportedBy,
-					"latitude": thermal.Center.Latitude,
-					"longitude": thermal.Center.Longitude,
+					"latitude": thermal.Position.Latitude,
+					"longitude": thermal.Position.Longitude,
 					"quality": thermal.Quality,
 				}).Debug("Processing thermal data")
 				
@@ -432,7 +432,7 @@ func convertFANETToPilot(msg *mqtt.FANETMessage) *models.Pilot {
 		Position: &models.GeoPoint{
 			Latitude:  airData.Latitude,
 			Longitude: airData.Longitude,
-			Altitude:  int16(airData.Altitude),
+			Altitude:  airData.Altitude,
 		},
 		Speed:       float32(airData.Speed),
 		ClimbRate:   airData.ClimbRate,
@@ -453,11 +453,11 @@ func convertFANETToThermal(msg *mqtt.FANETMessage) *models.Thermal {
 	return &models.Thermal{
 		ID:         fmt.Sprintf("%s_%d", msg.DeviceID, msg.Timestamp.Unix()),
 		ReportedBy: msg.DeviceID,
-		Center: models.GeoPoint{
+		Position: &models.GeoPoint{
 			Latitude:  thermalData.Latitude,
 			Longitude: thermalData.Longitude,
+			Altitude:  thermalData.Altitude,
 		},
-		Altitude:      thermalData.Altitude,
 		Quality:       int32(thermalData.Strength / 20), // Конвертируем 0-100 в 0-5
 		ClimbRate:     float32(thermalData.ClimbRate),
 		WindSpeed:     0,  // Нет в FANET Thermal
@@ -527,8 +527,8 @@ func convertPilotToProtobuf(pilot *models.Pilot) *pb.Pilot {
 		Position: &pb.GeoPoint{
 			Latitude:  pilot.Position.Latitude,
 			Longitude: pilot.Position.Longitude,
+			Altitude:  pilot.Position.Altitude,
 		},
-		Altitude:   int32(pilot.Position.Altitude),
 		Speed:      float32(pilot.Speed),
 		Climb:      float32(pilot.ClimbRate) / 10.0, // Конвертируем обратно в м/с
 		Course:     float32(pilot.Heading),
@@ -544,10 +544,10 @@ func convertThermalToProtobuf(thermal *models.Thermal) *pb.Thermal {
 		Id:   0, // TODO: конвертировать ID в uint64
 		Addr: 0, // TODO: конвертировать ReportedBy в uint32
 		Position: &pb.GeoPoint{
-			Latitude:  thermal.Center.Latitude,
-			Longitude: thermal.Center.Longitude,
+			Latitude:  thermal.Position.Latitude,
+			Longitude: thermal.Position.Longitude,
+			Altitude:  thermal.Position.Altitude,
 		},
-		Altitude:    int32(thermal.Altitude),
 		Quality:     uint32(thermal.Quality),
 		Climb:       float32(thermal.ClimbRate),
 		WindSpeed:   float32(thermal.WindSpeed),

@@ -14,9 +14,7 @@ type Thermal struct {
 	ReportedBy string `json:"reported_by"` // Device ID кто обнаружил
 
 	// Позиция
-	Center     GeoPoint  `json:"center"`     // Координаты центра
 	Position   *GeoPoint `json:"position"`   // Координаты центра (для совместимости)
-	Altitude   int32     `json:"altitude"`   // Высота термика (м)
 
 	// Характеристики
 	Quality    int32   `json:"quality"`      // Качество 0-5
@@ -42,7 +40,7 @@ func (t *Thermal) GetLatitude() float64 {
 	if t.Position != nil {
 		return t.Position.Latitude
 	}
-	return t.Center.Latitude
+	return t.Position.Latitude
 }
 
 // GetLongitude возвращает долготу для geo.Object
@@ -50,7 +48,7 @@ func (t *Thermal) GetLongitude() float64 {
 	if t.Position != nil {
 		return t.Position.Longitude
 	}
-	return t.Center.Longitude
+	return t.Position.Longitude
 }
 
 // GetTimestamp возвращает время последнего обновления для geo.Object
@@ -71,13 +69,13 @@ func (t *Thermal) Validate() error {
 		return fmt.Errorf("reported_by is required")
 	}
 
-	if err := t.Center.Validate(); err != nil {
+	if err := t.Position.Validate(); err != nil {
 		return fmt.Errorf("center: %w", err)
 	}
 
 	// Проверка высоты
-	if t.Altitude < 0 || t.Altitude > 10000 {
-		return fmt.Errorf("invalid altitude: %d", t.Altitude)
+	if t.Position.Altitude < 0 || t.Position.Altitude > 10000 {
+		return fmt.Errorf("invalid altitude: %d", t.Position.Altitude)
 	}
 
 	// Проверка качества
@@ -137,9 +135,9 @@ func (t *Thermal) GetQualityDescription() string {
 func (t *Thermal) ToRedisHash() map[string]interface{} {
 	return map[string]interface{}{
 		"reported_by":     t.ReportedBy,
-		"lat":             t.Center.Latitude,
-		"lon":             t.Center.Longitude,
-		"altitude":        t.Altitude,
+		"lat":             t.Position.Latitude,
+		"lon":             t.Position.Longitude,
+		"altitude":        t.Position.Altitude,
 		"quality":         t.Quality,
 		"climb_rate":      t.ClimbRate,
 		"wind_speed":      t.WindSpeed,
@@ -158,15 +156,15 @@ func (t *Thermal) FromRedisHash(id string, data map[string]string) error {
 	}
 
 	if lat, ok := data["lat"]; ok {
-		fmt.Sscanf(lat, "%f", &t.Center.Latitude)
+		fmt.Sscanf(lat, "%f", &t.Position.Latitude)
 	}
 
 	if lon, ok := data["lon"]; ok {
-		fmt.Sscanf(lon, "%f", &t.Center.Longitude)
+		fmt.Sscanf(lon, "%f", &t.Position.Longitude)
 	}
 
 	if alt, ok := data["altitude"]; ok {
-		fmt.Sscanf(alt, "%d", &t.Altitude)
+		fmt.Sscanf(alt, "%d", &t.Position.Altitude)
 	}
 
 	if quality, ok := data["quality"]; ok {
@@ -239,7 +237,7 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 				continue
 			}
 
-			distance := result.Center.DistanceTo(thermals[j].Center)
+			distance := result.Position.DistanceTo(*thermals[j].Position)
 			if distance <= mergeRadius {
 				// Объединяем
 				used[j] = true
@@ -248,12 +246,12 @@ func MergeThermals(thermals []Thermal, mergeRadius float64) []Thermal {
 				sumQuality += float32(thermals[j].Quality)
 
 				// Обновляем позицию как среднее
-				result.Center.Latitude = (result.Center.Latitude + thermals[j].Center.Latitude) / 2
-				result.Center.Longitude = (result.Center.Longitude + thermals[j].Center.Longitude) / 2
+				result.Position.Latitude = (result.Position.Latitude + thermals[j].Position.Latitude) / 2
+				result.Position.Longitude = (result.Position.Longitude + thermals[j].Position.Longitude) / 2
 				
 				// Берем максимальную высоту
-				if thermals[j].Altitude > result.Altitude {
-					result.Altitude = thermals[j].Altitude
+				if thermals[j].Position.Altitude > result.Position.Altitude {
+					result.Position.Altitude = thermals[j].Position.Altitude
 				}
 
 				// Обновляем ветер (берем от более качественного термика)
@@ -284,7 +282,6 @@ func (t *Thermal) ToProto() *pb.Thermal {
 	thermal := &pb.Thermal{
 		Id:       0, // TODO: конвертировать ID в uint64
 		Addr:     0, // TODO: конвертировать ReportedBy в uint32
-		Altitude: t.Altitude,
 		Quality:  uint32(t.Quality),
 		Climb:    t.ClimbRate,
 		WindSpeed:   float32(t.WindSpeed),
@@ -296,11 +293,12 @@ func (t *Thermal) ToProto() *pb.Thermal {
 		thermal.Position = &pb.GeoPoint{
 			Latitude:  t.Position.Latitude,
 			Longitude: t.Position.Longitude,
+			Altitude: t.Position.Altitude,
 		}
 	} else {
 		thermal.Position = &pb.GeoPoint{
-			Latitude:  t.Center.Latitude,
-			Longitude: t.Center.Longitude,
+			Latitude:  t.Position.Latitude,
+			Longitude: t.Position.Longitude,
 		}
 	}
 	

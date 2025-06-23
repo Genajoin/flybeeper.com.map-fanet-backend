@@ -12,7 +12,7 @@ import (
 type GeoPoint struct {
 	Latitude  float64 `json:"lat"`
 	Longitude float64 `json:"lon"`
-	Altitude  int16   `json:"alt"`
+	Altitude  int32   `json:"alt"`
 }
 
 // Validate проверяет корректность координат

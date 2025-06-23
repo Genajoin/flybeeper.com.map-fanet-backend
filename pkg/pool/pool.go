@@ -121,7 +121,6 @@ func (p *ObjectPools) PutPilot(pilot *models.Pilot) {
 	pilot.Address = ""
 	pilot.Name = ""
 	pilot.Type = 0
-	pilot.Altitude = 0
 	pilot.Speed = 0
 	pilot.ClimbRate = 0
 	pilot.Heading = 0
@@ -150,10 +149,8 @@ func (p *ObjectPools) PutThermal(thermal *models.Thermal) {
 	// Расширенная очистка объекта
 	thermal.ID = ""
 	thermal.ReportedBy = ""
-	thermal.Center.Latitude = 0
-	thermal.Center.Longitude = 0
-	thermal.Center.Altitude = 0
-	thermal.Altitude = 0
+	thermal.Position.Latitude = 0
+	thermal.Position.Longitude = 0
 	thermal.Quality = 0
 	thermal.ClimbRate = 0
 	thermal.WindSpeed = 0

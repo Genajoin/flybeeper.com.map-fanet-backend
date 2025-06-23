@@ -122,7 +122,7 @@ func (r *MySQLRepository) LoadInitialPilots(ctx context.Context, limit int) ([]*
 			Position: &models.GeoPoint{
 				Latitude:  lat,
 				Longitude: lon,
-				Altitude:  int16(altitude),
+				Altitude:  int32(altitude),
 			},
 			Speed:       float32(speed),
 			ClimbRate:   int16(climb),
@@ -189,11 +189,11 @@ func (r *MySQLRepository) LoadInitialThermals(ctx context.Context, limit int) ([
 		thermal := &models.Thermal{
 			ID:         strconv.Itoa(id),
 			ReportedBy: fmt.Sprintf("%06X", addr),
-			Center: models.GeoPoint{
+			Position: &models.GeoPoint{
 				Latitude:  lat,
 				Longitude: lon,
+				Altitude:  int32(altitude),
 			},
-			Altitude:      int32(altitude),
 			Quality:       int32(quality),
 			ClimbRate:     float32(climb),
 			WindSpeed:     uint8(float64(windSpeed) / 10 * 3.6), // м/с*10 -> км/ч
@@ -340,9 +340,9 @@ func (r *MySQLRepository) GetPilotTrack(ctx context.Context, deviceID string, li
 			continue
 		}
 
-		altInt := int16(0)
+		altInt := int32(0)
 		if altitude.Valid {
-			altInt = int16(altitude.Float64)
+			altInt = int32(altitude.Float64)
 		}
 
 		point := models.GeoPoint{
@@ -408,9 +408,9 @@ func (r *MySQLRepository) GetPilotTrackWithTimestamps(ctx context.Context, devic
 			continue
 		}
 
-		altInt := int16(0)
+		altInt := int32(0)
 		if altitude.Valid {
-			altInt = int16(altitude.Float64)
+			altInt = int32(altitude.Float64)
 		}
 
 		point := models.TrackGeoPoint{
@@ -739,8 +739,8 @@ func (r *MySQLRepository) SaveThermalsBatch(ctx context.Context, thermals []*mod
 		}
 
 		args = append(args,
-			addr, thermal.Center.Latitude, thermal.Center.Longitude,
-			thermal.Altitude, thermal.Quality, thermal.ClimbRate,
+			addr, thermal.Position.Latitude, thermal.Position.Longitude,
+			thermal.Position.Altitude, thermal.Quality, thermal.ClimbRate,
 			thermal.WindSpeed, thermal.WindDirection)
 	}
 

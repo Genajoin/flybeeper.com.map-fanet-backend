@@ -10,6 +10,7 @@ option go_package = "github.com/flybeeper/fanet-backend/pkg/pb;pb";
 message GeoPoint {
   double latitude = 1;   // Широта (-90 до 90)
   double longitude = 2;  // Долгота (-180 до 180)
+  int32 altitude = 3;    // Высота GPS (м)
 }
 
 // Географические границы

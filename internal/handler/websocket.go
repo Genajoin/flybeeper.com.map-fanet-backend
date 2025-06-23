@@ -395,8 +395,7 @@ func (h *WebSocketHandler) BroadcastUpdate(updateType pb.UpdateType, action pb.A
 			packet.Pilot = &models.Pilot{
 				Address:    v.Name, // Временно используем Name как Address
 				Name:       v.Name,
-				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
-				Altitude:   v.Altitude,
+				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude, Altitude:   v.Altitude},				
 				Speed:      v.Speed,
 				Heading:    v.Course,
 				LastUpdate: time.Unix(v.LastUpdate, 0),
@@ -407,8 +406,7 @@ func (h *WebSocketHandler) BroadcastUpdate(updateType pb.UpdateType, action pb.A
 		if v.Position != nil {
 			packet.Thermal = &models.Thermal{
 				ID:         fmt.Sprintf("%d", v.Id),
-				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude},
-				Altitude:   v.Altitude,
+				Position:   &models.GeoPoint{Latitude: v.Position.Latitude, Longitude: v.Position.Longitude, Altitude: v.Altitude},				
 				ClimbRate:  v.Climb,
 				Quality:    int32(v.Quality),
 				Timestamp:  time.Unix(v.Timestamp, 0),

@@ -67,7 +67,6 @@ type Pilot struct {
 
 	// Позиция
 	Position *GeoPoint `json:"position"` // Текущие координаты
-	Altitude int32    `json:"altitude"` // Высота в метрах
 
 	// Движение
 	Speed     float32 `json:"speed"`      // Скорость (км/ч)
@@ -126,8 +125,8 @@ func (p *Pilot) Validate() error {
 	}
 
 	// Проверка высоты
-	if p.Altitude < -1000 || p.Altitude > 15000 {
-		return fmt.Errorf("invalid altitude: %d", p.Altitude)
+	if p.Position.Altitude < -1000 || p.Position.Altitude > 15000 {
+		return fmt.Errorf("invalid altitude: %d", p.Position.Altitude)
 	}
 
 	// Проверка скорости
@@ -188,7 +187,6 @@ func (p *Pilot) ToProto() *pb.Pilot {
 		Addr:     0, // TODO: конвертировать DeviceID в uint32
 		Name:     p.Name,
 		Type:     pb.PilotType(p.Type),
-		Altitude: p.Altitude,
 		Speed:    p.Speed,
 		Climb:    float32(p.ClimbRate) / 10.0, // Конвертируем в м/с
 		Course:   p.Heading,
@@ -201,6 +199,7 @@ func (p *Pilot) ToProto() *pb.Pilot {
 		pilot.Position = &pb.GeoPoint{
 			Latitude:  p.Position.Latitude,
 			Longitude: p.Position.Longitude,
+			Altitude:  p.Position.Altitude,
 		}
 	}
 	
