@@ -94,7 +94,10 @@ func (s *ValidationService) ValidatePilot(pilot *models.Pilot) (bool, bool, erro
 		// Уменьшаем счет за отсутствие координат
 		s.updateValidationScore(state, false)
 		
-		shouldStore := state.ValidationScore >= s.config.MinScoreForRedis
+		// Проверяем гистерезис после изменения счета
+		s.checkHysteresis(state, pilot.DeviceID)
+		
+		shouldStore := state.IsValidated
 		return false, shouldStore, nil
 	}
 
@@ -122,7 +125,10 @@ func (s *ValidationService) ValidatePilot(pilot *models.Pilot) (bool, bool, erro
 		// Большой интервал считаем невалидным пакетом
 		s.updateValidationScore(state, false)
 		
-		shouldStore := state.ValidationScore >= s.config.MinScoreForRedis
+		// Проверяем гистерезис после изменения счета
+		s.checkHysteresis(state, pilot.DeviceID)
+		
+		shouldStore := state.IsValidated
 		return false, shouldStore, nil
 	}
 
@@ -134,7 +140,10 @@ func (s *ValidationService) ValidatePilot(pilot *models.Pilot) (bool, bool, erro
 		// Невалидный пакет
 		s.updateValidationScore(state, false)
 		
-		shouldStore := state.ValidationScore >= s.config.MinScoreForRedis
+		// Проверяем гистерезис после изменения счета
+		s.checkHysteresis(state, pilot.DeviceID)
+		
+		shouldStore := state.IsValidated
 		return false, shouldStore, nil
 	}
 
@@ -164,26 +173,8 @@ func (s *ValidationService) ValidatePilot(pilot *models.Pilot) (bool, bool, erro
 	state.LastPosition = pilot.Position
 	state.LastUpdate = pilot.LastUpdate
 	
-	// Устанавливаем флаг валидации если набрали достаточный счет (нижний порог)
-	if !state.IsValidated && state.ValidationScore >= s.config.MinScoreForRedis {
-		state.IsValidated = true
-		s.logger.WithField("device_id", pilot.DeviceID).
-			WithField("validation_score", state.ValidationScore).
-			WithField("threshold", s.config.MinScoreForRedis).
-			Info("Device ID reached minimum validation score")
-	}
-
-	// Сбрасываем валидацию если счет упал ниже верхнего порога (гистерезис)
-	if state.IsValidated && state.ValidationScore <= s.config.MaxScoreForRemoval {
-		state.IsValidated = false
-		s.logger.WithField("device_id", pilot.DeviceID).
-			WithField("validation_score", state.ValidationScore).
-			WithField("removal_threshold", s.config.MaxScoreForRemoval).
-			Warn("Device ID dropped below removal threshold (hysteresis)")
-		
-		s.metrics.InvalidatedIDs++
-		metrics.ValidationInvalidatedDevices.Inc()
-	}
+	// Проверяем гистерезис после изменения счета
+	s.checkHysteresis(state, pilot.DeviceID)
 
 	// Обновляем метрики пороговых значений
 	s.updateMetrics()
@@ -201,8 +192,8 @@ func (s *ValidationService) ValidatePilot(pilot *models.Pilot) (bool, bool, erro
 		state.FirstSeen = pilot.LastUpdate
 	}
 
-	// Определяем нужно ли сохранять в Redis
-	shouldStore := state.ValidationScore >= s.config.MinScoreForRedis
+	// Определяем нужно ли сохранять в Redis на основе статуса валидации (гистерезис)
+	shouldStore := state.IsValidated
 	
 	return isValid, shouldStore, nil
 }
@@ -279,16 +270,16 @@ func (s *ValidationService) CleanupOldStates(maxAge time.Duration) int {
 // updateMetrics обновляет метрики на основе текущего состояния
 func (s *ValidationService) updateMetrics() {
 	totalStates := len(s.states)
-	aboveThreshold := 0
+	validatedDevices := 0
 	
 	for _, state := range s.states {
-		if state.ValidationScore >= s.config.MinScoreForRedis {
-			aboveThreshold++
+		if state.IsValidated {
+			validatedDevices++
 		}
 	}
 	
 	metrics.ValidationActiveStates.Set(float64(totalStates))
-	metrics.ValidationDevicesAboveThreshold.Set(float64(aboveThreshold))
+	metrics.ValidationDevicesAboveThreshold.Set(float64(validatedDevices))
 }
 
 // updateValidationScore обновляет счет валидации на основе результата проверки пакета
@@ -355,4 +346,28 @@ func (s *ValidationService) calculateDistance(lat1, lon1, lat2, lon2 float64) fl
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 	
 	return R * c
+}
+
+// checkHysteresis проверяет и обновляет статус валидации с учетом гистерезиса
+func (s *ValidationService) checkHysteresis(state *models.PilotValidationState, deviceID string) {
+	// Устанавливаем флаг валидации если набрали достаточный счет (высокий порог гистерезиса)
+	if !state.IsValidated && state.ValidationScore >= s.config.MinScoreToAdd {
+		state.IsValidated = true
+		s.logger.WithField("device_id", deviceID).
+			WithField("validation_score", state.ValidationScore).
+			WithField("add_threshold", s.config.MinScoreToAdd).
+			Info("Device ID reached validation score for API inclusion")
+	}
+
+	// Сбрасываем валидацию если счет упал ниже низкого порога (гистерезис)
+	if state.IsValidated && state.ValidationScore <= s.config.MaxScoreToRemove {
+		state.IsValidated = false
+		s.logger.WithField("device_id", deviceID).
+			WithField("validation_score", state.ValidationScore).
+			WithField("removal_threshold", s.config.MaxScoreToRemove).
+			Warn("Device ID dropped below removal threshold (hysteresis)")
+		
+		s.metrics.InvalidatedIDs++
+		metrics.ValidationInvalidatedDevices.Inc()
+	}
 }

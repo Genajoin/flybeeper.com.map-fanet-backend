@@ -171,8 +171,8 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	pilotKey := PilotPrefix + pilot.DeviceID
 	pipe.HSet(ctx, pilotKey, map[string]interface{}{
 		"name":         pilot.Name,
-		"type":         pilot.Type,
-		"altitude":     pilot.Position.Altitude,
+		"type":         uint8(pilot.Type), // Явно конвертируем PilotType в uint8 для Redis
+		"altitude":     pilot.Altitude,
 		"speed":        pilot.Speed,
 		"climb":        pilot.ClimbRate,
 		"course":       pilot.Heading,
@@ -212,7 +212,13 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 	// Обновляем статистику
 	r.client.Incr(ctx, StatsPrefix+"pilots:updates")
 
-	r.logger.WithField("device_id", pilot.DeviceID).WithField("lat", pilot.Position.Latitude).WithField("lon", pilot.Position.Longitude).Debug("Saved pilot to Redis")
+	r.logger.WithFields(map[string]interface{}{
+		"device_id": pilot.DeviceID,
+		"lat": pilot.Position.Latitude,
+		"lon": pilot.Position.Longitude,
+		"pilot_type": pilot.Type,
+		"pilot_type_uint8": uint8(pilot.Type),
+	}).Debug("Saved pilot to Redis")
 
 	// Записываем метрики
 	duration := time.Since(start).Seconds()
@@ -709,14 +715,28 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 	}
 
 	if typeStr, ok := data["type"]; ok {
-		if t, err := strconv.Atoi(typeStr); err == nil {
+		if t, err := r.parseRedisUint8(typeStr, "pilot_type", deviceID); err == nil {
 			pilot.Type = models.PilotType(t)
+			r.logger.WithFields(map[string]interface{}{
+				"device_id": deviceID,
+				"type_string": typeStr,
+				"type_hex": fmt.Sprintf("%x", []byte(typeStr)),
+				"type_parsed": t,
+				"pilot_type": pilot.Type,
+			}).Debug("Parsed pilot type from Redis")
+		} else {
+			r.logger.WithFields(map[string]interface{}{
+				"device_id": deviceID,
+				"type_string": typeStr,
+				"type_hex": fmt.Sprintf("%x", []byte(typeStr)),
+				"parse_error": err,
+			}).Warn("Failed to parse pilot type from Redis")
 		}
 	}
 
 	if altStr, ok := data["altitude"]; ok {
 		if alt, err := strconv.Atoi(altStr); err == nil {
-			pilot.Position.Altitude = int16(alt)
+			pilot.Altitude = int32(alt)
 		}
 	}
 
@@ -749,8 +769,14 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 	}
 
 	if batteryStr, ok := data["battery"]; ok {
-		if battery, err := strconv.Atoi(batteryStr); err == nil {
-			pilot.Battery = uint8(battery)
+		if battery, err := r.parseRedisUint8(batteryStr, "battery", deviceID); err == nil {
+			pilot.Battery = battery
+		} else {
+			r.logger.WithFields(map[string]interface{}{
+				"device_id": deviceID,
+				"battery_string": batteryStr,
+				"parse_error": err,
+			}).Debug("Failed to parse battery from Redis")
 		}
 	}
 
@@ -851,8 +877,8 @@ func (r *RedisRepository) mapToStation(stationID string, data map[string]string,
 	}
 
 	if humidityStr, ok := data["humidity"]; ok {
-		if humidity, err := strconv.Atoi(humidityStr); err == nil {
-			station.Humidity = uint8(humidity)
+		if humidity, err := r.parseRedisUint8(humidityStr, "humidity", stationID); err == nil {
+			station.Humidity = humidity
 		}
 	}
 
@@ -863,8 +889,8 @@ func (r *RedisRepository) mapToStation(stationID string, data map[string]string,
 	}
 
 	if batteryStr, ok := data["battery"]; ok {
-		if battery, err := strconv.Atoi(batteryStr); err == nil {
-			station.Battery = uint8(battery)
+		if battery, err := r.parseRedisUint8(batteryStr, "battery", stationID); err == nil {
+			station.Battery = battery
 		}
 	}
 
@@ -967,4 +993,38 @@ func (r *RedisRepository) GetAllStations(ctx context.Context) ([]*models.Station
 
 	r.logger.WithField("count", len(stations)).Debug("Retrieved all stations")
 	return stations, nil
+}
+
+// parseRedisUint8 безопасно парсит uint8 значение из Redis, которое может быть сохранено как строка или байт
+func (r *RedisRepository) parseRedisUint8(value string, fieldName string, deviceID string) (uint8, error) {
+	// Сначала пробуем парсить как обычную строку с числом
+	if t, err := strconv.Atoi(value); err == nil {
+		if t >= 0 && t <= 255 {
+			return uint8(t), nil
+		}
+		return 0, fmt.Errorf("value %d out of uint8 range [0, 255]", t)
+	}
+	
+	// Если обычный парсинг не сработал, проверяем на байтовое представление
+	if len(value) == 1 {
+		byteVal := uint8(value[0])
+		r.logger.WithFields(map[string]interface{}{
+			"device_id": deviceID,
+			"field": fieldName,
+			"byte_value": byteVal,
+			"hex_value": fmt.Sprintf("0x%02x", byteVal),
+		}).Debug("Parsed Redis uint8 from byte representation")
+		return byteVal, nil
+	}
+	
+	// Если это многобайтовая строка, логируем для отладки
+	r.logger.WithFields(map[string]interface{}{
+		"device_id": deviceID,
+		"field": fieldName,
+		"value_length": len(value),
+		"value_bytes": fmt.Sprintf("%x", []byte(value)),
+		"first_byte": fmt.Sprintf("0x%02x", value[0]),
+	}).Debug("Redis uint8 parsing debug info")
+	
+	return 0, fmt.Errorf("unable to parse '%s' as uint8: not a valid number string or single byte", value)
 }

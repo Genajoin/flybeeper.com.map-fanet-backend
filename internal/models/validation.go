@@ -47,8 +47,8 @@ type ValidationConfig struct {
 	InitialScore         int           // Начальный счет валидации
 	ValidPacketBonus     int           // Бонус за валидный пакет
 	InvalidPacketPenalty int           // Штраф за невалидный пакет
-	MinScoreForRedis     int           // Минимальный счет для появления в Redis
-	MaxScoreForRemoval   int           // Максимальный счет для удаления из Redis (гистерезис)
+	MinScoreToAdd        int           // Минимальный счет для появления в Redis (высокий порог гистерезиса)
+	MaxScoreToRemove     int           // Максимальный счет для удаления из Redis (низкий порог гистерезиса)
 	MaxScore             int           // Максимальный счет валидации
 }
 
@@ -59,10 +59,10 @@ func DefaultValidationConfig() *ValidationConfig {
 		SpeedMultiplier:      1.2, // +20% к максимальной скорости
 		MinPacketsToValid:    2,
 		InitialScore:         50,  // Начинаем с середины
-		ValidPacketBonus:     3,   // Медленно растем при валидных пакетах
-		InvalidPacketPenalty: 10,  // Быстро падаем при невалидных
-		MinScoreForRedis:     30,  // Минимум 30 баллов для появления в API
-		MaxScoreForRemoval:   70,  // Максимум 70 баллов для удаления из API (гистерезис)
+		ValidPacketBonus:     15,  // Быстро растем при валидных пакетах (было 3)
+		InvalidPacketPenalty: 25,  // Быстро падаем при невалидных (было 10)
+		MinScoreToAdd:        70,  // Высокий порог для появления в API (гистерезис)
+		MaxScoreToRemove:     30,  // Низкий порог для удаления из API (гистерезис)
 		MaxScore:             100, // Максимальный счет
 	}
 }
