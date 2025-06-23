@@ -82,8 +82,30 @@ func main() {
 		}
 	}
 
-	// Создаем HTTP сервер с Redis клиентом для auth кеширования
-	server := handler.NewServer(cfg, redisRepo, mysqlRepo, redisRepo.GetClient(), logger)
+	// Создаем сервис валидации входящих данных
+	// Система валидации предотвращает сохранение недостоверных данных от "фантомных" пилотов
+	// Алгоритм: первый пакет ждет валидации, второй проверяется по скорости движения
+	validationService := service.NewValidationService(logger, nil)
+	
+	// Запускаем периодическую очистку старых состояний валидации
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				removed := validationService.CleanupOldStates(2 * time.Hour)
+				if removed > 0 {
+					logger.WithField("removed", removed).Debug("Cleaned up old validation states")
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Создаем HTTP сервер с Redis клиентом для auth кеширования и сервисом валидации
+	server := handler.NewServer(cfg, redisRepo, mysqlRepo, redisRepo.GetClient(), logger, validationService)
 
 	// Получаем WebSocket handler для интеграции с MQTT
 	wsHandler := server.GetWebSocketHandler()
@@ -104,29 +126,80 @@ func main() {
 					"online": pilot.TrackOnline,
 				}).Debug("Processing pilot data")
 				
-				// Сохраняем в Redis (синхронно - критично для производительности)
-				if err := redisRepo.SavePilot(ctx, pilot); err != nil {
+				// Валидируем данные пилота с новой логикой скоринга
+				isValid, shouldStore, err := validationService.ValidatePilot(pilot)
+				if err != nil {
 					logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
-						Error("Failed to save pilot to Redis")
+						Error("Failed to validate pilot")
 					return err
 				}
 				
-				logger.WithField("device_id", pilot.DeviceID).Debug("Successfully saved pilot to Redis")
+				// Проверяем состояние валидации для принятия решений
+				state, stateExists := validationService.GetValidationState(pilot.DeviceID)
 				
-				// Асинхронно добавляем в MySQL batch queue (неблокирующая операция)
-				if batchWriter != nil {
-					if err := batchWriter.QueuePilot(pilot); err != nil {
+				if shouldStore {
+					// Счет достаточен для сохранения в Redis
+					if err := redisRepo.SavePilot(ctx, pilot); err != nil {
 						logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
-							Warn("Failed to queue pilot for MySQL batch")
-					} else {
-						logger.WithField("device_id", pilot.DeviceID).Debug("Queued pilot for MySQL batch")
+							Error("Failed to save pilot to Redis")
+						return err
 					}
+					
+					logger.WithFields(map[string]interface{}{
+						"device_id": pilot.DeviceID,
+						"is_valid": isValid,
+						"validation_score": func() int {
+							if stateExists {
+								return state.ValidationScore
+							}
+							return -1
+						}(),
+					}).Debug("Successfully saved pilot to Redis")
+					
+					// Асинхронно добавляем в MySQL batch queue
+					if batchWriter != nil {
+						if err := batchWriter.QueuePilot(pilot); err != nil {
+							logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
+								Warn("Failed to queue pilot for MySQL batch")
+						} else {
+							logger.WithField("device_id", pilot.DeviceID).Debug("Queued pilot for MySQL batch")
+						}
+					}
+					
+					// Транслируем через WebSocket только если пилот должен быть видим
+					pbPilot := convertPilotToProtobuf(pilot)
+					wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_PILOT, pb.Action_ACTION_UPDATE, pbPilot)
+					logger.WithField("device_id", pilot.DeviceID).Debug("Broadcasted pilot update via WebSocket")
+				} else {
+					// Счет недостаточен - удаляем из Redis если был там
+					if stateExists && state.IsValidated {
+						// Пилот ранее был валидным но теперь упал ниже порога
+						if err := redisRepo.RemovePilot(ctx, pilot.DeviceID); err != nil {
+							logger.WithField("error", err).WithField("device_id", pilot.DeviceID).
+								Warn("Failed to remove pilot from Redis")
+						} else {
+							logger.WithFields(map[string]interface{}{
+								"device_id": pilot.DeviceID,
+								"validation_score": state.ValidationScore,
+							}).Info("Removed pilot from Redis due to low validation score")
+							
+							// Отправляем сигнал удаления через WebSocket
+							pbPilot := convertPilotToProtobuf(pilot)
+							wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_PILOT, pb.Action_ACTION_REMOVE, pbPilot)
+						}
+					}
+					
+					logger.WithFields(map[string]interface{}{
+						"device_id": pilot.DeviceID,
+						"is_valid": isValid,
+						"validation_score": func() int {
+							if stateExists {
+								return state.ValidationScore
+							}
+							return -1
+						}(),
+					}).Debug("Pilot validation score insufficient for Redis storage")
 				}
-				
-				// Транслируем через WebSocket
-				pbPilot := convertPilotToProtobuf(pilot)
-				wsHandler.BroadcastUpdate(pb.UpdateType_UPDATE_TYPE_PILOT, pb.Action_ACTION_UPDATE, pbPilot)
-				logger.WithField("device_id", pilot.DeviceID).Debug("Broadcasted pilot update via WebSocket")
 			} else {
 				logger.WithField("fanet_type", msg.Type).Warn("Failed to convert FANET message to pilot model")
 			}

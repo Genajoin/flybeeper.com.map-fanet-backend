@@ -12,6 +12,7 @@ import (
 	"github.com/flybeeper/fanet-backend/internal/config"
 	"github.com/flybeeper/fanet-backend/internal/metrics"
 	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/internal/service"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/redis/go-redis/v9"
@@ -21,17 +22,18 @@ import (
 
 // Server HTTP/2 сервер
 type Server struct {
-	router     *gin.Engine
-	httpServer *http.Server
-	logger      *utils.Logger
-	config      *config.Config
-	restHandler *RESTHandler
-	wsHandler   *WebSocketHandler
-	authMW      *auth.Middleware
+	router           *gin.Engine
+	httpServer       *http.Server
+	logger           *utils.Logger
+	config           *config.Config
+	restHandler      *RESTHandler
+	wsHandler        *WebSocketHandler
+	authMW           *auth.Middleware
+	validationHandler *ValidationHandler
 }
 
 // NewServer создает новый HTTP сервер
-func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repository.HistoryRepository, redisClient *redis.Client, logger *utils.Logger) *Server {
+func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repository.HistoryRepository, redisClient *redis.Client, logger *utils.Logger, validationService *service.ValidationService) *Server {
 	// Production mode для Gin
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -53,6 +55,12 @@ func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repos
 	
 	// WebSocket handler
 	wsHandler := NewWebSocketHandler(repo, logger)
+	
+	// Validation handler
+	var validationHandler *ValidationHandler
+	if validationService != nil {
+		validationHandler = NewValidationHandler(validationService)
+	}
 
 	// Auth middleware - создаем logrus.Logger для совместимости
 	logrusLogger := logrus.New()
@@ -63,12 +71,13 @@ func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repos
 	authMW := auth.NewMiddleware(authValidator, logrusLogger)
 
 	server := &Server{
-		router:      router,
-		logger:      logger,
-		config:      cfg,
-		restHandler: restHandler,
-		wsHandler:   wsHandler,
-		authMW:      authMW,
+		router:           router,
+		logger:           logger,
+		config:           cfg,
+		restHandler:      restHandler,
+		wsHandler:        wsHandler,
+		authMW:           authMW,
+		validationHandler: validationHandler,
 	}
 
 	// Настройка HTTP сервера с HTTP/2
@@ -111,6 +120,13 @@ func (s *Server) setupRoutes() {
 		protected.Use(s.authMW.Authenticate())
 		{
 			protected.POST("/position", s.restHandler.PostPosition)
+		}
+
+		// Validation endpoints (если validationHandler доступен)
+		if s.validationHandler != nil {
+			v1.POST("/invalidate/:device_id", s.validationHandler.InvalidateDevice)
+			v1.GET("/validation/:device_id", s.validationHandler.GetValidationState)
+			v1.GET("/validation/metrics", s.validationHandler.GetValidationMetrics)
 		}
 	}
 

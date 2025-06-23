@@ -259,6 +259,41 @@ func (r *RedisRepository) UpdatePilotName(ctx context.Context, deviceID string, 
 	return nil
 }
 
+// RemovePilot удаляет пилота из всех ключей Redis
+func (r *RedisRepository) RemovePilot(ctx context.Context, deviceID string) error {
+	if deviceID == "" {
+		return fmt.Errorf("device ID cannot be empty")
+	}
+
+	start := time.Now()
+	pipe := r.client.Pipeline()
+
+	// Удаляем из геопространственного индекса
+	geoMember := fmt.Sprintf("pilot:%s", deviceID)
+	pipe.ZRem(ctx, PilotsGeoKey, geoMember)
+
+	// Удаляем детальные данные
+	pilotKey := PilotPrefix + deviceID
+	pipe.Del(ctx, pilotKey)
+
+	// Удаляем данные трека
+	trackKey := TrackPrefix + deviceID
+	pipe.Del(ctx, trackKey)
+
+	// Выполняем все операции
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to remove pilot from Redis: %w", err)
+	}
+
+	elapsed := time.Since(start)
+	r.logger.WithField("device_id", deviceID).
+		WithField("elapsed_ms", elapsed.Milliseconds()).
+		Debug("Successfully removed pilot from Redis")
+
+	return nil
+}
+
 // GetPilotsInRadius возвращает пилотов в указанном радиусе
 func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Pilot, error) {
 	start := time.Now()
