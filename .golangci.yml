@@ -1,0 +1,186 @@
+# .golangci.yml configuration for FANET API project
+
+run:
+  timeout: 5m
+  go: '1.23'
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+  uniq-by-line: true
+  sort-results: true
+
+linters-settings:
+  # Cyclomatic complexity
+  cyclop:
+    max-complexity: 15
+    package-average: 5.0
+    skip-tests: true
+
+  # Duplicate code detection
+  dupl:
+    threshold: 100
+
+  # Function length
+  funlen:
+    lines: 80
+    statements: 50
+
+  # Cognitive complexity
+  gocognit:
+    min-complexity: 15
+
+  # Line length
+  lll:
+    line-length: 120
+
+  # Nolint directive validation
+  nolintlint:
+    allow-leading-space: true
+    allow-unused: false
+    require-explanation: false
+    require-specific: false
+
+  # Variable naming
+  revive:
+    severity: warning
+    rules:
+      - name: exported-function
+      - name: exported-type
+      - name: package-comments
+        disabled: true # Disabled for now, can be enabled later
+      - name: comment-spacings
+      - name: indent-error-flow
+      - name: if-return
+      - name: increment-decrement
+      - name: var-naming
+      - name: var-declaration
+      - name: package-naming
+      - name: range-val-in-closure
+      - name: range-val-address
+      - name: waitgroup-by-value
+      - name: atomic
+      - name: type-assert
+      - name: empty-block
+      - name: superfluous-else
+      - name: unused-parameter
+        disabled: true # Too noisy for tests
+      - name: unreachable-code
+      - name: redefines-builtin-id
+
+  # Test file naming
+  testpackage:
+    skip-regexp: (export|internal)_test\.go
+
+  # Unused variables
+  unused:
+    check-exported: false
+
+  # Whitespace
+  wsl:
+    strict-append: true
+    allow-assign-and-call: true
+    allow-multiline-assign: true
+    allow-case-traling-whitespace: true
+    allow-cuddle-declarations: false
+    force-case-trailing-whitespace: 0
+
+linters:
+  disable-all: true
+  enable:
+    # Core linters
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code
+    - govet         # Vet examines code
+    - ineffassign   # Detect ineffectual assignments
+    - staticcheck   # Static analysis
+    - typecheck     # Type checking
+    - unused        # Find unused code
+    
+    # Code quality
+    - gocyclo       # Cyclomatic complexity
+    - gofmt         # Format checking
+    - goimports     # Import management
+    - revive        # Fast, configurable, extensible linter
+    - misspell      # Spelling mistakes
+    - unconvert     # Unnecessary type conversions
+    
+    # Potential bugs
+    - bodyclose     # Check HTTP response body closure
+    - noctx         # Check for naked returns
+    - rowserrcheck  # Check SQL rows.Err()
+    - sqlclosecheck # Check SQL Close() calls
+    
+    # Performance
+    - prealloc      # Suggest slice preallocation
+    
+    # Style
+    - gci           # Control golang package import order
+    - whitespace    # Whitespace detection
+    
+    # Tests
+    - testpackage   # Test package naming
+    - tparallel     # Parallel test detection
+
+issues:
+  # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-rules:
+    # Exclude some linters from running on tests files
+    - path: _test\.go
+      linters:
+        - gocyclo
+        - errcheck
+        - dupl
+        - gosec
+        - funlen
+        - gocognit
+        - lll
+        
+    # Exclude some linters from running on integration tests
+    - path: internal/integration/.*_test\.go
+      linters:
+        - gocyclo
+        - funlen
+        - gocognit
+        - dupl
+        
+    # Exclude generated files
+    - path: \.pb\.go$
+      linters:
+        - all
+        
+    # Exclude specific issues
+    - text: "G404:" # Random number generation
+      linters:
+        - gosec
+        
+    - text: "ST1000:" # Package comment
+      linters:
+        - stylecheck
+        
+    - text: "should have a package comment"
+      linters:
+        - revive
+
+  # Show only new issues created since this revision
+  new-from-rev: HEAD~10
+
+  # Maximum issues count per one linter
+  max-issues-per-linter: 50
+
+  # Maximum count of issues with the same text
+  max-same-issues: 3
+
+  # Show only new issues created in git patch with `git diff HEAD~1`
+  # new: true
+
+severity:
+  default-severity: error
+  case-sensitive: false
+  rules:
+    - linters:
+        - revive
+      severity: warning

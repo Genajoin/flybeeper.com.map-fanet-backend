@@ -206,11 +206,13 @@ make dev                 # API с hot reload на localhost:8090
 ## Дополнительные директивы
 
 - По-возможности используй спецификации @ai-spec/
+- Новую документацию пиши в @ai-spec/
 - При изменении .proto файлов всегда запускай `make proto`
 - Для тестирования используй среду разработки через `make dev-env && make dev`
 - Порт API изменен с 8080 на 8090 для избежания конфликтов
 - Полная документация разработчика в DEVELOPMENT.md
 - При проблемах с MQTT проверь docker logs docker-mqtt-1
+- используй unix форматирование окончания строк
 
 ## Команды для быстрого тестирования
 
@@ -261,3 +263,4 @@ cd deployments/monitoring && docker-compose up -d  # Запуск Grafana + Prom
 3. **Использование токена для FANET API**: `Authorization: Bearer {token}`
 4. **Отправка позиций**: `POST /api/v1/position` с аутентификацией
 5. **WebSocket подключение**: `ws://api.flybeeper.com/ws/v1/updates?token={token}` (будущее)
+
