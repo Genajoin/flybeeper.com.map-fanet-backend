@@ -28,6 +28,11 @@ type Repository interface {
 	GetStationsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Station, error)
 	GetAllStations(ctx context.Context) ([]*models.Station, error)
 
+	// Операции с наземными объектами
+	SaveGroundObject(ctx context.Context, groundObject *models.GroundObject) error
+	GetGroundObjectsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.GroundObject, error)
+	DeleteGroundObject(ctx context.Context, deviceID string) error
+
 	// Статистика
 	GetStats(ctx context.Context) (map[string]interface{}, error)
 }

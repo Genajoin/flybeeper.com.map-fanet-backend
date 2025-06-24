@@ -37,7 +37,7 @@ func NewRESTHandler(repo repository.Repository, historyRepo repository.HistoryRe
 }
 
 // GetSnapshot возвращает начальный снимок всех объектов в радиусе
-// GET /api/v1/snapshot?lat=46.5&lon=15.6&radius=200&air-types=1,2,5&ground-types=1,2,4
+// GET /api/v1/snapshot?lat=46.5&lon=15.6&radius=200&air-types=1,2,5&ground-types=1,2,4&max_age=300&pilots=true&stations=true&thermals=true&ground_objects=true
 func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), h.timeout)
 	defer cancel()
@@ -75,6 +75,26 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		Longitude: lon,
 	}
 
+	// Парсинг параметра max_age (опционально, в секундах)
+	maxAgeDuration := 24 * time.Hour // По умолчанию 24 часа
+	if maxAgeParam := c.Query("max_age"); maxAgeParam != "" {
+		maxAge, err := strconv.Atoi(maxAgeParam)
+		if err != nil || maxAge < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    "invalid_max_age",
+				"message": "max_age must be a positive number of seconds",
+			})
+			return
+		}
+		maxAgeDuration = time.Duration(maxAge) * time.Second
+	}
+
+	// Парсинг параметров типов объектов (по умолчанию все true)
+	includePilots := c.DefaultQuery("pilots", "true") == "true"
+	includeStations := c.DefaultQuery("stations", "true") == "true"
+	includeThermals := c.DefaultQuery("thermals", "true") == "true"
+	includeGroundObjects := c.DefaultQuery("ground_objects", "true") == "true"
+
 	// Парсинг параметра air-types (опционально)
 	var filterAirTypes []models.PilotType
 	airTypesParam := c.Query("air-types")
@@ -103,80 +123,138 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		}
 	}
 
-	// Получаем данные из репозитория
-	pilots, err := h.repo.GetPilotsInRadius(ctx, center, float64(radius))
-	if err != nil {
-		h.logger.WithField("error", err).Error("Failed to get pilots")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    "internal_error",
-			"message": "Failed to retrieve pilots",
-		})
-		return
-	}
-
-	// Фильтруем пилотов по типам, если указан параметр air-types
-	if len(filterAirTypes) > 0 {
-		filtered := make([]*models.Pilot, 0, len(pilots))
-		typeMap := make(map[models.PilotType]bool)
-		for _, t := range filterAirTypes {
-			typeMap[t] = true
-		}
-		for _, pilot := range pilots {
-			if typeMap[pilot.Type] {
-				filtered = append(filtered, pilot)
-			}
-		}
-		pilots = filtered
-	}
-
-	thermals, err := h.repo.GetThermalsInRadius(ctx, center, float64(radius))
-	if err != nil {
-		h.logger.WithField("error", err).Error("Failed to get thermals")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    "internal_error",
-			"message": "Failed to retrieve thermals",
-		})
-		return
-	}
-
-	// Получаем наземные объекты (пока используем пустой слайс, так как репозиторий еще не реализован)
+	// Получаем данные из репозитория только для запрошенных типов
+	var pilots []*models.Pilot
+	var thermals []*models.Thermal
+	var stations []*models.Station
 	var groundObjects []*models.GroundObject
-	// TODO: Реализовать GetGroundObjectsInRadius в репозитории
-	// groundObjects, err := h.repo.GetGroundObjectsInRadius(ctx, center, float64(radius))
-	// if err != nil {
-	//     h.logger.WithField("error", err).Error("Failed to get ground objects")
-	//     c.JSON(http.StatusInternalServerError, gin.H{
-	//         "code":    "internal_error",
-	//         "message": "Failed to retrieve ground objects",
-	//     })
-	//     return
-	// }
 
-	// Фильтруем наземные объекты по типам, если указан параметр ground-types
-	if len(filterGroundTypes) > 0 && len(groundObjects) > 0 {
-		filtered := make([]*models.GroundObject, 0, len(groundObjects))
-		typeMap := make(map[models.GroundType]bool)
-		for _, t := range filterGroundTypes {
-			typeMap[t] = true
+	// Получаем пилотов если включены
+	if includePilots {
+		pilots, err = h.repo.GetPilotsInRadius(ctx, center, float64(radius))
+		if err != nil {
+			h.logger.WithField("error", err).Error("Failed to get pilots")
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "internal_error",
+				"message": "Failed to retrieve pilots",
+			})
+			return
 		}
-		for _, obj := range groundObjects {
-			if typeMap[obj.Type] {
-				filtered = append(filtered, obj)
+
+		// Фильтруем пилотов по типам, если указан параметр air-types
+		if len(filterAirTypes) > 0 {
+			filtered := make([]*models.Pilot, 0, len(pilots))
+			typeMap := make(map[models.PilotType]bool)
+			for _, t := range filterAirTypes {
+				typeMap[t] = true
 			}
+			for _, pilot := range pilots {
+				if typeMap[pilot.Type] {
+					filtered = append(filtered, pilot)
+				}
+			}
+			pilots = filtered
 		}
-		groundObjects = filtered
+
+		// Фильтруем по max_age
+		if maxAgeDuration < 24*time.Hour {
+			filtered := make([]*models.Pilot, 0, len(pilots))
+			for _, pilot := range pilots {
+				if !pilot.IsStale(maxAgeDuration) {
+					filtered = append(filtered, pilot)
+				}
+			}
+			pilots = filtered
+		}
 	}
 
-	// Для snapshot получаем все станции, не только в радиусе
-	// (станции без координат не индексируются в GEO, но сохраняются в Redis)
-	stations, err := h.repo.GetAllStations(ctx)
-	if err != nil {
-		h.logger.WithField("error", err).Error("Failed to get stations")
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    "internal_error",
-			"message": "Failed to retrieve stations",
-		})
-		return
+	// Получаем термики если включены
+	if includeThermals {
+		thermals, err = h.repo.GetThermalsInRadius(ctx, center, float64(radius))
+		if err != nil {
+			h.logger.WithField("error", err).Error("Failed to get thermals")
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "internal_error",
+				"message": "Failed to retrieve thermals",
+			})
+			return
+		}
+
+		// Фильтруем по max_age
+		if maxAgeDuration < 24*time.Hour {
+			filtered := make([]*models.Thermal, 0, len(thermals))
+			for _, thermal := range thermals {
+				if !thermal.IsStale(maxAgeDuration) {
+					filtered = append(filtered, thermal)
+				}
+			}
+			thermals = filtered
+		}
+	}
+
+	// Получаем наземные объекты если включены
+	if includeGroundObjects {
+		groundObjects, err = h.repo.GetGroundObjectsInRadius(ctx, center, float64(radius))
+		if err != nil {
+			h.logger.WithField("error", err).Error("Failed to get ground objects")
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "internal_error",
+				"message": "Failed to retrieve ground objects",
+			})
+			return
+		}
+
+		// Фильтруем наземные объекты по типам, если указан параметр ground-types
+		if len(filterGroundTypes) > 0 && len(groundObjects) > 0 {
+			filtered := make([]*models.GroundObject, 0, len(groundObjects))
+			typeMap := make(map[models.GroundType]bool)
+			for _, t := range filterGroundTypes {
+				typeMap[t] = true
+			}
+			for _, obj := range groundObjects {
+				if typeMap[obj.Type] {
+					filtered = append(filtered, obj)
+				}
+			}
+			groundObjects = filtered
+		}
+
+		// Фильтруем по max_age
+		if maxAgeDuration < 24*time.Hour {
+			filtered := make([]*models.GroundObject, 0, len(groundObjects))
+			for _, obj := range groundObjects {
+				if !obj.IsStale(maxAgeDuration) {
+					filtered = append(filtered, obj)
+				}
+			}
+			groundObjects = filtered
+		}
+	}
+
+	// Получаем станции если включены
+	if includeStations {
+		// Для snapshot получаем все станции, не только в радиусе
+		// (станции без координат не индексируются в GEO, но сохраняются в Redis)
+		stations, err = h.repo.GetAllStations(ctx)
+		if err != nil {
+			h.logger.WithField("error", err).Error("Failed to get stations")
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    "internal_error",
+				"message": "Failed to retrieve stations",
+			})
+			return
+		}
+
+		// Фильтруем по max_age
+		if maxAgeDuration < 24*time.Hour {
+			filtered := make([]*models.Station, 0, len(stations))
+			for _, station := range stations {
+				if !station.IsStale(maxAgeDuration) {
+					filtered = append(filtered, station)
+				}
+			}
+			stations = filtered
+		}
 	}
 
 	// Создаем Protobuf ответ
@@ -216,6 +294,17 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 		"ground_objects": len(groundObjects),
 		"thermals":       len(thermals),
 		"stations":       len(stations),
+	}
+	if maxAgeDuration < 24*time.Hour {
+		logFields["max_age_seconds"] = int(maxAgeDuration.Seconds())
+	}
+	if !includePilots || !includeStations || !includeThermals || !includeGroundObjects {
+		logFields["include_types"] = map[string]bool{
+			"pilots":         includePilots,
+			"stations":       includeStations,
+			"thermals":       includeThermals,
+			"ground_objects": includeGroundObjects,
+		}
 	}
 	if len(filterAirTypes) > 0 {
 		logFields["filter_air_types"] = filterAirTypes

@@ -18,18 +18,20 @@ import (
 
 const (
 	// Ключи для геопространственных индексов
-	PilotsGeoKey   = "pilots:geo"     // GEO индекс для пилотов
-	ThermalsGeoKey = "thermals:geo"   // GEO индекс для термиков
-	StationsGeoKey = "stations:geo"   // GEO индекс для метеостанций
+	PilotsGeoKey        = "pilots:geo"        // GEO индекс для пилотов
+	ThermalsGeoKey      = "thermals:geo"      // GEO индекс для термиков
+	StationsGeoKey      = "stations:geo"      // GEO индекс для метеостанций
+	GroundObjectsGeoKey = "ground_objects:geo" // GEO индекс для наземных объектов
 	
 	// Дополнительные индексы
 	ThermalsTimeKey = "thermals:time" // Z-SET индекс термиков по времени
 	
 	// Префиксы для хешей с детальными данными
-	PilotPrefix   = "pilot:"         // pilot:{addr}
-	ThermalPrefix = "thermal:"       // thermal:{id}
-	StationPrefix = "station:"       // station:{addr}
-	TrackPrefix   = "track:"         // track:{addr} - список точек трека
+	PilotPrefix        = "pilot:"         // pilot:{addr}
+	ThermalPrefix      = "thermal:"       // thermal:{id}
+	StationPrefix      = "station:"       // station:{addr}
+	GroundObjectPrefix = "ground:"        // ground:{addr}
+	TrackPrefix        = "track:"         // track:{addr} - список точек трека
 	
 	// Префиксы для клиентов и подписок
 	ClientPrefix        = "client:"         // client:{id}
@@ -44,11 +46,12 @@ const (
 	StatsPrefix    = "stats:"          // stats:{metric}
 	
 	// TTL для данных (согласно спецификации)
-	PilotTTL     = 12 * time.Hour     // 43200 секунд
-	ThermalTTL   = 6 * time.Hour      // 21600 секунд
-	StationTTL   = 24 * time.Hour     // 86400 секунд
-	ClientTTL    = 5 * time.Minute    // 300 секунд
-	AuthTokenTTL = 1 * time.Hour      // 3600 секунд
+	PilotTTL        = 12 * time.Hour     // 43200 секунд
+	ThermalTTL      = 6 * time.Hour      // 21600 секунд
+	StationTTL      = 24 * time.Hour     // 86400 секунд
+	GroundObjectTTL = 4 * time.Hour      // 14400 секунд
+	ClientTTL       = 5 * time.Minute    // 300 секунд
+	AuthTokenTTL    = 1 * time.Hour      // 3600 секунд
 	
 	// Настройки для списков
 	MaxTrackPoints    = 999          // Максимум точек в треке
@@ -1027,4 +1030,213 @@ func (r *RedisRepository) parseRedisUint8(value string, fieldName string, device
 	}).Debug("Redis uint8 parsing debug info")
 	
 	return 0, fmt.Errorf("unable to parse '%s' as uint8: not a valid number string or single byte", value)
+}
+
+// SaveGroundObject сохраняет данные наземного объекта в Redis
+func (r *RedisRepository) SaveGroundObject(ctx context.Context, groundObject *models.GroundObject) error {
+	if groundObject == nil {
+		return fmt.Errorf("ground object cannot be nil")
+	}
+
+	start := time.Now()
+	pipe := r.client.Pipeline()
+
+	// Сохраняем в геопространственный индекс только если координаты валидны
+	if groundObject.Position != nil && 
+		groundObject.Position.Latitude != 0 && groundObject.Position.Longitude != 0 &&
+		groundObject.Position.Latitude >= -85.05112878 && groundObject.Position.Latitude <= 85.05112878 &&
+		groundObject.Position.Longitude >= -180 && groundObject.Position.Longitude <= 180 &&
+		!math.IsNaN(groundObject.Position.Latitude) && !math.IsNaN(groundObject.Position.Longitude) &&
+		!math.IsInf(groundObject.Position.Latitude, 0) && !math.IsInf(groundObject.Position.Longitude, 0) {
+		
+		pipe.GeoAdd(ctx, GroundObjectsGeoKey, &redis.GeoLocation{
+			Name:      fmt.Sprintf("ground:%s", groundObject.DeviceID),
+			Latitude:  groundObject.Position.Latitude,
+			Longitude: groundObject.Position.Longitude,
+		})
+	} else {
+		r.logger.WithField("device_id", groundObject.DeviceID).
+			Warn("Skipping GEO indexing for ground object with invalid coordinates")
+	}
+
+	// Сохраняем детальные данные в HSET
+	groundKey := GroundObjectPrefix + groundObject.DeviceID
+	pipe.HSet(ctx, groundKey, map[string]interface{}{
+		"name":         groundObject.Name,
+		"type":         uint8(groundObject.Type),
+		"track_online": groundObject.TrackOnline,
+		"last_update":  groundObject.LastUpdate.Unix(),
+	})
+
+	// Устанавливаем TTL (4 часа для наземных объектов)
+	pipe.Expire(ctx, groundKey, GroundObjectTTL)
+
+	// Выполняем пайплайн
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		metrics.RedisOperationErrors.WithLabelValues("save_ground_object").Inc()
+		return fmt.Errorf("failed to save ground object: %w", err)
+	}
+
+	duration := time.Since(start).Seconds()
+	metrics.RedisOperationDuration.WithLabelValues("save_ground_object").Observe(duration)
+	
+	r.logger.WithFields(map[string]interface{}{
+		"device_id": groundObject.DeviceID,
+		"name": groundObject.Name,
+		"type": groundObject.Type,
+		"lat": groundObject.Position.Latitude,
+		"lon": groundObject.Position.Longitude,
+		"duration_ms": duration * 1000,
+	}).Debug("Ground object saved to Redis")
+
+	return nil
+}
+
+// GetGroundObjectsInRadius возвращает наземные объекты в радиусе от центра
+func (r *RedisRepository) GetGroundObjectsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.GroundObject, error) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		metrics.RedisOperationDuration.WithLabelValues("get_ground_objects_radius").Observe(duration)
+	}()
+
+	// Получаем объекты из геопространственного индекса
+	results, err := r.client.GeoRadius(ctx, GroundObjectsGeoKey, center.Longitude, center.Latitude, &redis.GeoRadiusQuery{
+		Radius:       radiusKM,
+		Unit:         "km",
+		WithCoord:    true,
+		WithDist:     true,
+		Sort:         "ASC",
+		Count:        1000, // Ограничение на количество результатов
+	}).Result()
+
+	if err != nil {
+		if err == redis.Nil {
+			return []*models.GroundObject{}, nil
+		}
+		metrics.RedisOperationErrors.WithLabelValues("get_ground_objects_radius").Inc()
+		return nil, fmt.Errorf("failed to get ground objects in radius: %w", err)
+	}
+
+	if len(results) == 0 {
+		return []*models.GroundObject{}, nil
+	}
+
+	// Получаем детальные данные для каждого объекта
+	pipe := r.client.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, len(results))
+	deviceIDs := make([]string, len(results))
+
+	for i, result := range results {
+		deviceID := strings.TrimPrefix(result.Name, "ground:")
+		deviceIDs[i] = deviceID
+		groundKey := GroundObjectPrefix + deviceID
+		cmds[i] = pipe.HGetAll(ctx, groundKey)
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil && err != redis.Nil {
+		metrics.RedisOperationErrors.WithLabelValues("get_ground_objects_details").Inc()
+		return nil, fmt.Errorf("failed to get ground object details: %w", err)
+	}
+
+	groundObjects := make([]*models.GroundObject, 0, len(results))
+	
+	for i, cmd := range cmds {
+		data, err := cmd.Result()
+		if err != nil {
+			r.logger.WithField("device_id", deviceIDs[i]).WithField("error", err).
+				Warn("Failed to get ground object details")
+			continue
+		}
+
+		if len(data) == 0 {
+			r.logger.WithField("device_id", deviceIDs[i]).
+				Warn("Ground object exists in GEO index but has no data")
+			continue
+		}
+
+		groundObject, err := r.mapToGroundObject(deviceIDs[i], data, &redis.GeoLocation{
+			Latitude:  results[i].Latitude,
+			Longitude: results[i].Longitude,
+		})
+		if err != nil {
+			r.logger.WithField("device_id", deviceIDs[i]).WithField("error", err).
+				Warn("Failed to map ground object data")
+			continue
+		}
+
+		groundObjects = append(groundObjects, groundObject)
+	}
+
+	r.logger.WithFields(map[string]interface{}{
+		"count": len(groundObjects),
+		"center_lat": center.Latitude,
+		"center_lon": center.Longitude,
+		"radius_km": radiusKM,
+		"duration_ms": time.Since(start).Milliseconds(),
+	}).Debug("Retrieved ground objects in radius")
+
+	return groundObjects, nil
+}
+
+// DeleteGroundObject удаляет наземный объект из Redis
+func (r *RedisRepository) DeleteGroundObject(ctx context.Context, deviceID string) error {
+	pipe := r.client.Pipeline()
+	
+	// Удаляем из геопространственного индекса
+	pipe.ZRem(ctx, GroundObjectsGeoKey, fmt.Sprintf("ground:%s", deviceID))
+	
+	// Удаляем детальные данные
+	groundKey := GroundObjectPrefix + deviceID
+	pipe.Del(ctx, groundKey)
+	
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to delete ground object: %w", err)
+	}
+	
+	r.logger.WithField("device_id", deviceID).Debug("Ground object deleted from Redis")
+	return nil
+}
+
+// mapToGroundObject конвертирует HSET данные в модель наземного объекта
+func (r *RedisRepository) mapToGroundObject(deviceID string, data map[string]string, location *redis.GeoLocation) (*models.GroundObject, error) {
+	groundObject := &models.GroundObject{
+		DeviceID: deviceID,
+		Position: &models.GeoPoint{
+			Latitude:  location.Latitude,
+			Longitude: location.Longitude,
+		},
+	}
+
+	// Парсим строковые значения из Redis HSET
+	if name, ok := data["name"]; ok {
+		groundObject.Name = name
+	}
+
+	if typeStr, ok := data["type"]; ok {
+		if t, err := r.parseRedisUint8(typeStr, "ground_type", deviceID); err == nil {
+			groundObject.Type = models.GroundType(t)
+		} else {
+			r.logger.WithFields(map[string]interface{}{
+				"device_id": deviceID,
+				"type_string": typeStr,
+				"parse_error": err,
+			}).Warn("Failed to parse ground object type from Redis")
+		}
+	}
+
+	if updateStr, ok := data["last_update"]; ok {
+		if timestamp, err := strconv.ParseInt(updateStr, 10, 64); err == nil {
+			groundObject.LastUpdate = time.Unix(timestamp, 0)
+		}
+	}
+
+	if onlineStr, ok := data["track_online"]; ok {
+		groundObject.TrackOnline = onlineStr == "1" || onlineStr == "true"
+	}
+
+	return groundObject, nil
 }
