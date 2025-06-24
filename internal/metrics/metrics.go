@@ -183,6 +183,23 @@ var (
 			Help: "Redis connection status (1 = connected, 0 = disconnected)",
 		},
 	)
+	
+	// Batch Writer дополнительные метрики
+	MySQLBatchFlushes = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "fanet_mysql_batch_flushes_total",
+			Help: "Total number of batch flushes to MySQL",
+		},
+		[]string{"entity_type", "trigger"}, // trigger: size_limit, interval, shutdown
+	)
+	
+	MySQLBatchWriterStatus = promauto.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "fanet_mysql_batch_writer_status",
+			Help: "Batch writer status metrics",
+		},
+		[]string{"metric"}, // queued, processed, errors, last_batch_size
+	)
 )
 
 // SetAppInfo устанавливает информацию о версии приложения

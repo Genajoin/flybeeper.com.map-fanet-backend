@@ -234,18 +234,21 @@ func (bw *BatchWriter) pilotWorker() {
 			
 			// Флашим при достижении размера батча
 			if len(bw.pilotBuffer) >= bw.config.BatchSize {
+				metrics.MySQLBatchFlushes.WithLabelValues("pilots", "size_limit").Inc()
 				bw.flushPilots()
 			}
 
 		case <-ticker.C:
 			// Периодический flush даже если батч не полный
 			if len(bw.pilotBuffer) > 0 {
+				metrics.MySQLBatchFlushes.WithLabelValues("pilots", "interval").Inc()
 				bw.flushPilots()
 			}
 
 		case <-bw.ctx.Done():
 			// Финальный flush при завершении
 			if len(bw.pilotBuffer) > 0 {
+				metrics.MySQLBatchFlushes.WithLabelValues("pilots", "shutdown").Inc()
 				bw.flushPilots()
 			}
 			return
@@ -326,7 +329,12 @@ func (bw *BatchWriter) flushPilots() {
 	
 	// Трекаем размер батча
 	batchSize := len(batch)
-	metrics.MySQLBatchSize.WithLabelValues("thermals").Observe(float64(batchSize))
+	metrics.MySQLBatchSize.WithLabelValues("pilots").Observe(float64(batchSize))
+	
+	// Логируем детали батча
+	bw.logger.WithField("batch_size", batchSize).
+		WithField("queue_depth", len(bw.pilotChan)).
+		Info("Flushing pilots batch to MySQL")
 
 	// Выполняем с retry
 	err := bw.retryOperation(func() error {
@@ -501,16 +509,47 @@ func (bw *BatchWriter) GetMetrics() BatchMetrics {
 func (bw *BatchWriter) metricsWorker() {
 	defer bw.wg.Done()
 	
-	ticker := time.NewTicker(10 * time.Second) // Обновляем метрики каждые 10 секунд
-	defer ticker.Stop()
+	metricsTicker := time.NewTicker(10 * time.Second) // Обновляем метрики каждые 10 секунд
+	statusTicker := time.NewTicker(60 * time.Second)  // Логируем статус каждую минуту
+	defer metricsTicker.Stop()
+	defer statusTicker.Stop()
 	
 	for {
 		select {
-		case <-ticker.C:
+		case <-metricsTicker.C:
 			// Обновляем метрики размеров очередей
-			metrics.MySQLQueueSize.WithLabelValues("pilots").Set(float64(len(bw.pilotChan)))
-			metrics.MySQLQueueSize.WithLabelValues("thermals").Set(float64(len(bw.thermalChan)))
-			metrics.MySQLQueueSize.WithLabelValues("stations").Set(float64(len(bw.stationChan)))
+			pilotsQueueSize := len(bw.pilotChan)
+			thermalsQueueSize := len(bw.thermalChan)
+			stationsQueueSize := len(bw.stationChan)
+			
+			metrics.MySQLQueueSize.WithLabelValues("pilots").Set(float64(pilotsQueueSize))
+			metrics.MySQLQueueSize.WithLabelValues("thermals").Set(float64(thermalsQueueSize))
+			metrics.MySQLQueueSize.WithLabelValues("stations").Set(float64(stationsQueueSize))
+			
+			// Обновляем статусные метрики
+			bw.metrics.mu.RLock()
+			metrics.MySQLBatchWriterStatus.WithLabelValues("pilots_queued").Set(float64(bw.metrics.PilotsQueued))
+			metrics.MySQLBatchWriterStatus.WithLabelValues("pilots_processed").Set(float64(bw.metrics.PilotsProcessed))
+			metrics.MySQLBatchWriterStatus.WithLabelValues("pilots_errors").Set(float64(bw.metrics.PilotsErrors))
+			metrics.MySQLBatchWriterStatus.WithLabelValues("last_batch_size").Set(float64(bw.metrics.LastBatchSize))
+			bw.metrics.mu.RUnlock()
+			
+		case <-statusTicker.C:
+			// Периодическое логирование статуса
+			bw.metrics.mu.RLock()
+			bw.logger.WithFields(map[string]interface{}{
+				"pilots_queued":     bw.metrics.PilotsQueued,
+				"pilots_processed":  bw.metrics.PilotsProcessed,
+				"pilots_errors":     bw.metrics.PilotsErrors,
+				"pilots_queue_size": len(bw.pilotChan),
+				"thermals_queued":   bw.metrics.ThermalsQueued,
+				"thermals_processed": bw.metrics.ThermalsProcessed,
+				"stations_queued":   bw.metrics.StationsQueued,
+				"stations_processed": bw.metrics.StationsProcessed,
+				"last_batch_size":   bw.metrics.LastBatchSize,
+				"last_flush_ms":     bw.metrics.LastFlushDuration.Milliseconds(),
+			}).Info("Batch writer status")
+			bw.metrics.mu.RUnlock()
 			
 		case <-bw.ctx.Done():
 			return

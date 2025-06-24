@@ -55,30 +55,16 @@ func main() {
 	metrics.RedisConnectionStatus.Set(1)
 	logger.Info("Connected to Redis")
 
-	// Инициализируем MySQL репозиторий (опционально)
+	// Инициализируем MySQL репозиторий с retry логикой
 	var mysqlRepo *repository.MySQLRepository
 	var batchWriter *service.BatchWriter
 	if cfg.MySQL.DSN != "" {
-		mysqlRepo, err = repository.NewMySQLRepository(&cfg.MySQL, logger)
-		if err != nil {
-			logger.WithField("error", err).Warn("Failed to initialize MySQL repository")
-		} else {
+		mysqlRepo, batchWriter = initializeMySQLWithRetry(ctx, &cfg.MySQL, logger)
+		if mysqlRepo != nil {
 			defer mysqlRepo.Close()
-			if err := mysqlRepo.Ping(ctx); err != nil {
-				metrics.MySQLConnectionStatus.Set(0)
-				logger.WithField("error", err).Warn("Failed to connect to MySQL")
-			} else {
-				metrics.MySQLConnectionStatus.Set(1)
-				logger.Info("Connected to MySQL")
-				
-				// Инициализируем batch writer для высокопроизводительной записи
-				batchWriter = service.NewBatchWriter(mysqlRepo, logger, nil)
-				defer batchWriter.Stop()
-				
-				logger.WithField("batch_size", 1000).
-					WithField("flush_interval", "5s").
-					Info("Started MySQL batch writer")
-			}
+		}
+		if batchWriter != nil {
+			defer batchWriter.Stop()
 		}
 	}
 
@@ -573,4 +559,60 @@ func convertStationToProtobuf(station *models.Station) *pb.Station {
 		Battery:     uint32(station.Battery),
 		LastUpdate:  station.LastUpdate.Unix(),
 	}
+}
+
+// initializeMySQLWithRetry инициализирует MySQL соединение с retry логикой
+func initializeMySQLWithRetry(ctx context.Context, cfg *config.MySQLConfig, logger *utils.Logger) (*repository.MySQLRepository, *service.BatchWriter) {
+	maxRetries := 5
+	retryDelay := 2 * time.Second
+	
+	var mysqlRepo *repository.MySQLRepository
+	var err error
+	
+	// Попытки создать репозиторий
+	for i := 0; i < maxRetries; i++ {
+		if i > 0 {
+			logger.WithField("attempt", i+1).WithField("max_retries", maxRetries).
+				Info("Retrying MySQL connection...")
+			time.Sleep(retryDelay)
+		}
+		
+		mysqlRepo, err = repository.NewMySQLRepository(cfg, logger)
+		if err != nil {
+			logger.WithField("error", err).WithField("attempt", i+1).
+				Warn("Failed to initialize MySQL repository")
+			continue
+		}
+		
+		// Проверяем соединение
+		if err := mysqlRepo.Ping(ctx); err != nil {
+			metrics.MySQLConnectionStatus.Set(0)
+			logger.WithField("error", err).WithField("attempt", i+1).
+				Warn("Failed to ping MySQL")
+			mysqlRepo.Close()
+			mysqlRepo = nil
+			continue
+		}
+		
+		// Успешное подключение
+		metrics.MySQLConnectionStatus.Set(1)
+		logger.Info("Connected to MySQL")
+		
+		// Инициализируем batch writer
+		batchWriter := service.NewBatchWriter(mysqlRepo, logger, nil)
+		
+		logger.WithField("batch_size", 1000).
+			WithField("flush_interval", "5s").
+			WithField("worker_count", 10).
+			Info("Started MySQL batch writer")
+		
+		return mysqlRepo, batchWriter
+	}
+	
+	// Все попытки исчерпаны
+	logger.WithField("max_retries", maxRetries).
+		Error("Failed to connect to MySQL after all retries")
+	metrics.MySQLConnectionStatus.Set(0)
+	
+	return nil, nil
 }
