@@ -13,6 +13,7 @@ import (
 	"github.com/flybeeper/fanet-backend/internal/filter"
 	"github.com/flybeeper/fanet-backend/internal/models"
 	"github.com/flybeeper/fanet-backend/internal/repository"
+	"github.com/flybeeper/fanet-backend/internal/service"
 	"github.com/flybeeper/fanet-backend/pkg/pb"
 	"github.com/flybeeper/fanet-backend/pkg/utils"
 	"google.golang.org/protobuf/proto"
@@ -20,19 +21,21 @@ import (
 
 // RESTHandler обработчик REST API endpoints
 type RESTHandler struct {
-	repo        repository.Repository
-	historyRepo repository.HistoryRepository
-	logger      *utils.Logger
-	timeout     time.Duration
+	repo            repository.Repository
+	historyRepo     repository.HistoryRepository
+	logger          *utils.Logger
+	timeout         time.Duration
+	boundaryTracker *service.BoundaryTracker
 }
 
 // NewRESTHandler создает новый REST handler
-func NewRESTHandler(repo repository.Repository, historyRepo repository.HistoryRepository, logger *utils.Logger) *RESTHandler {
+func NewRESTHandler(repo repository.Repository, historyRepo repository.HistoryRepository, logger *utils.Logger, boundaryTracker *service.BoundaryTracker) *RESTHandler {
 	return &RESTHandler{
-		repo:        repo,
-		historyRepo: historyRepo,
-		logger:      logger,
-		timeout:     30 * time.Second,
+		repo:            repo,
+		historyRepo:     historyRepo,
+		logger:          logger,
+		timeout:         30 * time.Second,
+		boundaryTracker: boundaryTracker,
 	}
 }
 
@@ -162,6 +165,25 @@ func (h *RESTHandler) GetSnapshot(c *gin.Context) {
 			for _, pilot := range pilots {
 				if !pilot.IsStale(maxAgeDuration) {
 					filtered = append(filtered, pilot)
+				}
+			}
+			pilots = filtered
+		}
+		
+		// Фильтруем по границам отслеживания
+		if h.boundaryTracker != nil {
+			filtered := make([]*models.Pilot, 0, len(pilots))
+			for _, pilot := range pilots {
+				if pilot.Position != nil {
+					// Используем last_movement из модели если есть, иначе last_update
+					lastMovement := pilot.LastUpdate
+					if pilot.LastMovement != nil && !pilot.LastMovement.IsZero() {
+						lastMovement = *pilot.LastMovement
+					}
+					
+					if h.boundaryTracker.ShouldIncludeInSnapshot(*pilot.Position, lastMovement) {
+						filtered = append(filtered, pilot)
+					}
 				}
 			}
 			pilots = filtered

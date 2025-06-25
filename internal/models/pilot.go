@@ -78,6 +78,11 @@ type Pilot struct {
 	LastSeen    time.Time `json:"last_seen"`              // Время последнего обновления (алиас)
 	TrackOnline bool      `json:"track_online,omitempty"` // Онлайн трекинг
 	Battery     uint8     `json:"battery,omitempty"`      // Заряд батареи (%)
+	
+	// Поля для отслеживания границ
+	LastMovement     *time.Time `json:"last_movement,omitempty"`     // Время последнего значимого движения
+	TrackingDistance float64    `json:"tracking_distance,omitempty"` // Расстояние от центра отслеживания
+	VisibilityStatus string     `json:"visibility_status,omitempty"` // Статус видимости: "visible", "boundary", "outside"
 }
 
 // GetID возвращает уникальный идентификатор для geo.Object

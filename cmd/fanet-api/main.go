@@ -90,8 +90,22 @@ func main() {
 		}
 	}()
 
-	// Создаем HTTP сервер с Redis клиентом для auth кеширования и сервисом валидации
-	server := handler.NewServer(cfg, redisRepo, mysqlRepo, redisRepo.GetClient(), logger, validationService)
+	// Создаем сервис отслеживания границ OGN
+	ognCenter := models.GeoPoint{
+		Latitude:  cfg.Geo.OGNCenterLat,
+		Longitude: cfg.Geo.OGNCenterLon,
+	}
+	boundaryTracker := service.NewBoundaryTracker(
+		logger,
+		ognCenter,
+		cfg.Geo.OGNRadiusKM,
+		cfg.Geo.TrackingRadiusPercent,
+		cfg.Geo.BoundaryGracePeriod,
+		cfg.Geo.MinMovementDistance,
+	)
+
+	// Создаем HTTP сервер с Redis клиентом для auth кеширования, сервисом валидации и boundary tracker
+	server := handler.NewServer(cfg, redisRepo, mysqlRepo, redisRepo.GetClient(), logger, validationService, boundaryTracker)
 
 	// Получаем WebSocket handler для интеграции с MQTT
 	wsHandler := server.GetWebSocketHandler()
@@ -102,6 +116,23 @@ func main() {
 		switch msg.Type {
 		case 1: // Air tracking
 			if pilot := convertFANETToPilot(msg); pilot != nil {
+				// Получаем предыдущую позицию из Redis для определения движения
+				existingPilot, err := redisRepo.GetPilot(ctx, pilot.DeviceID)
+				var lastPosition *models.GeoPoint
+				if err == nil && existingPilot != nil && existingPilot.Position != nil {
+					lastPosition = existingPilot.Position
+				}
+				
+				// Определяем статус объекта относительно границ всех центров отслеживания
+				status := boundaryTracker.GetObjectStatus(*pilot.Position, lastPosition, pilot.LastUpdate)
+				
+				// Обновляем поля модели на основе статуса
+				pilot.TrackingDistance = status.Distance
+				pilot.VisibilityStatus = status.VisibilityStatus
+				if status.LastMovement != pilot.LastUpdate {
+					pilot.LastMovement = &status.LastMovement
+				}
+				
 				// Логируем начало обработки пилота
 				logger.WithFields(map[string]interface{}{
 					"device_id": pilot.DeviceID,
@@ -110,6 +141,8 @@ func main() {
 					"altitude": pilot.Position.Altitude,
 					"aircraft_type": pilot.Type,
 					"online": pilot.TrackOnline,
+					"visibility_status": pilot.VisibilityStatus,
+					"tracking_distance": pilot.TrackingDistance,
 				}).Debug("Processing pilot data")
 				
 				// Валидируем данные пилота с новой логикой скоринга

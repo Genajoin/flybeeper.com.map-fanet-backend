@@ -73,9 +73,17 @@ type CORSConfig struct {
 
 // GeoConfig конфигурация геопространственных настроек
 type GeoConfig struct {
-	DefaultRadiusKM int
-	MaxRadiusKM     int
-	GeohashPrecision int
+	DefaultRadiusKM        int
+	MaxRadiusKM            int
+	GeohashPrecision       int
+	TrackingRadiusPercent  float64       // Процент от радиуса запроса для внутренней зоны отслеживания
+	BoundaryGracePeriod    time.Duration // Время показа объекта после выхода за границу tracking zone
+	MinMovementDistance    float64       // Минимальное расстояние движения в метрах
+	
+	// OGN центр отслеживания
+	OGNCenterLat           float64       // Широта центра OGN
+	OGNCenterLon           float64       // Долгота центра OGN
+	OGNRadiusKM            float64       // Радиус отслеживания OGN в км
 }
 
 // PerformanceConfig конфигурация производительности
@@ -144,9 +152,15 @@ func Load() (*Config, error) {
 			}),
 		},
 		Geo: GeoConfig{
-			DefaultRadiusKM:  getInt("DEFAULT_RADIUS_KM", 200),
-			MaxRadiusKM:      getInt("MAX_RADIUS_KM", 200),
-			GeohashPrecision: getInt("GEOHASH_PRECISION", 5),
+			DefaultRadiusKM:       getInt("DEFAULT_RADIUS_KM", 200),
+			MaxRadiusKM:           getInt("MAX_RADIUS_KM", 200),
+			GeohashPrecision:      getInt("GEOHASH_PRECISION", 5),
+			TrackingRadiusPercent: getFloat("TRACKING_RADIUS_PERCENT", 0.9),
+			BoundaryGracePeriod:   getDuration("BOUNDARY_GRACE_PERIOD", 5*time.Minute),
+			MinMovementDistance:   getFloat("MIN_MOVEMENT_DISTANCE", 100.0),
+			OGNCenterLat:          getFloat("OGN_CENTER_LAT", 46.5),
+			OGNCenterLon:          getFloat("OGN_CENTER_LON", 14.2),
+			OGNRadiusKM:           getFloat("OGN_RADIUS_KM", 200.0),
 		},
 		Performance: PerformanceConfig{
 			WorkerPoolSize:        getInt("WORKER_POOL_SIZE", 100),
@@ -197,6 +211,18 @@ func (c *Config) Validate() error {
 
 	if c.Geo.GeohashPrecision < 1 || c.Geo.GeohashPrecision > 12 {
 		return fmt.Errorf("GEOHASH_PRECISION must be between 1 and 12")
+	}
+
+	if c.Geo.TrackingRadiusPercent <= 0 || c.Geo.TrackingRadiusPercent > 1 {
+		return fmt.Errorf("TRACKING_RADIUS_PERCENT must be between 0 and 1")
+	}
+
+	if c.Geo.MinMovementDistance < 0 {
+		return fmt.Errorf("MIN_MOVEMENT_DISTANCE must be non-negative")
+	}
+
+	if c.Geo.OGNRadiusKM <= 0 {
+		return fmt.Errorf("OGN_RADIUS_KM must be positive")
 	}
 
 	// Проверка производительности
@@ -259,6 +285,15 @@ func getStringSlice(key string, defaultValue []string) []string {
 		}
 		if len(result) > 0 {
 			return result
+		}
+	}
+	return defaultValue
+}
+
+func getFloat(key string, defaultValue float64) float64 {
+	if value := os.Getenv(key); value != "" {
+		if floatValue, err := strconv.ParseFloat(value, 64); err == nil {
+			return floatValue
 		}
 	}
 	return defaultValue

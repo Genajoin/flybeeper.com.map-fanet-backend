@@ -30,10 +30,11 @@ type Server struct {
 	wsHandler        *WebSocketHandler
 	authMW           *auth.Middleware
 	validationHandler *ValidationHandler
+	boundaryTracker   *service.BoundaryTracker
 }
 
 // NewServer создает новый HTTP сервер
-func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repository.HistoryRepository, redisClient *redis.Client, logger *utils.Logger, validationService *service.ValidationService) *Server {
+func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repository.HistoryRepository, redisClient *redis.Client, logger *utils.Logger, validationService *service.ValidationService, boundaryTracker *service.BoundaryTracker) *Server {
 	// Production mode для Gin
 	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
@@ -50,8 +51,8 @@ func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repos
 	router.Use(SecurityHeadersMiddleware())
 	router.Use(metrics.HTTPMetricsMiddleware())
 
-	// REST handler
-	restHandler := NewRESTHandler(repo, historyRepo, logger)
+	// REST handler с boundary tracker
+	restHandler := NewRESTHandler(repo, historyRepo, logger, boundaryTracker)
 	
 	// WebSocket handler
 	wsHandler := NewWebSocketHandler(repo, logger)
@@ -78,6 +79,7 @@ func NewServer(cfg *config.Config, repo repository.Repository, historyRepo repos
 		wsHandler:        wsHandler,
 		authMW:           authMW,
 		validationHandler: validationHandler,
+		boundaryTracker:   boundaryTracker,
 	}
 
 	// Настройка HTTP сервера с HTTP/2

@@ -172,7 +172,7 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 
 	// Сохраняем детальные данные в HSET согласно спецификации
 	pilotKey := PilotPrefix + pilot.DeviceID
-	pipe.HSet(ctx, pilotKey, map[string]interface{}{
+	pilotData := map[string]interface{}{
 		"name":         pilot.Name,
 		"type":         uint8(pilot.Type), // Явно конвертируем PilotType в uint8 для Redis
 		"altitude":     pilot.Position.Altitude,
@@ -182,7 +182,22 @@ func (r *RedisRepository) SavePilot(ctx context.Context, pilot *models.Pilot) er
 		"last_update":  pilot.LastUpdate.Unix(),
 		"track_online": pilot.TrackOnline,
 		"battery":      pilot.Battery,
-	})
+		"latitude":     pilot.Position.Latitude,
+		"longitude":    pilot.Position.Longitude,
+	}
+	
+	// Добавляем дополнительные поля для отслеживания границ если они есть
+	if pilot.LastMovement != nil && !pilot.LastMovement.IsZero() {
+		pilotData["last_movement"] = pilot.LastMovement.Unix()
+	}
+	if pilot.TrackingDistance >= 0 {
+		pilotData["tracking_distance"] = pilot.TrackingDistance
+	}
+	if pilot.VisibilityStatus != "" {
+		pilotData["visibility_status"] = pilot.VisibilityStatus
+	}
+	
+	pipe.HSet(ctx, pilotKey, pilotData)
 
 	// Устанавливаем TTL
 	pipe.Expire(ctx, pilotKey, PilotTTL)
@@ -395,6 +410,56 @@ func (r *RedisRepository) GetPilotsInRadius(ctx context.Context, center models.G
 	metrics.RedisOperationDuration.WithLabelValues("get_pilots_radius").Observe(duration)
 	
 	return pilots, nil
+}
+
+// GetPilot возвращает данные одного пилота по device ID
+func (r *RedisRepository) GetPilot(ctx context.Context, deviceID string) (*models.Pilot, error) {
+	if deviceID == "" {
+		return nil, fmt.Errorf("device ID cannot be empty")
+	}
+
+	start := time.Now()
+	pilotKey := PilotPrefix + deviceID
+
+	// Получаем данные пилота из HSET
+	data, err := r.client.HGetAll(ctx, pilotKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // Пилот не найден
+		}
+		return nil, fmt.Errorf("failed to get pilot data: %w", err)
+	}
+
+	if len(data) == 0 {
+		return nil, nil // Пилот не найден
+	}
+
+	// Получаем координаты из сохраненных полей
+	var lat, lon float64
+	if latStr, ok := data["latitude"]; ok {
+		lat, _ = strconv.ParseFloat(latStr, 64)
+	}
+	if lonStr, ok := data["longitude"]; ok {
+		lon, _ = strconv.ParseFloat(lonStr, 64)
+	}
+
+	// Создаем GeoLocation для обратной совместимости с mapToPilot
+	location := &redis.GeoLocation{
+		Latitude:  lat,
+		Longitude: lon,
+	}
+
+	// Конвертируем в модель пилота
+	pilot, err := r.mapToPilot(deviceID, data, location)
+	if err != nil {
+		return nil, fmt.Errorf("failed to map pilot data: %w", err)
+	}
+
+	// Записываем метрики
+	duration := time.Since(start).Seconds()
+	metrics.RedisOperationDuration.WithLabelValues("get_pilot").Observe(duration)
+
+	return pilot, nil
 }
 
 // SaveThermal сохраняет данные термика
@@ -781,6 +846,24 @@ func (r *RedisRepository) mapToPilot(deviceID string, data map[string]string, lo
 				"parse_error": err,
 			}).Debug("Failed to parse battery from Redis")
 		}
+	}
+
+	// Парсим поля для отслеживания границ
+	if lastMovementStr, ok := data["last_movement"]; ok {
+		if timestamp, err := strconv.ParseInt(lastMovementStr, 10, 64); err == nil {
+			t := time.Unix(timestamp, 0)
+			pilot.LastMovement = &t
+		}
+	}
+
+	if trackingDistStr, ok := data["tracking_distance"]; ok {
+		if dist, err := strconv.ParseFloat(trackingDistStr, 64); err == nil {
+			pilot.TrackingDistance = dist
+		}
+	}
+
+	if visStatus, ok := data["visibility_status"]; ok {
+		pilot.VisibilityStatus = visStatus
 	}
 
 	return pilot, nil

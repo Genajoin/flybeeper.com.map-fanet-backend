@@ -16,8 +16,10 @@ type Repository interface {
 	// Операции с пилотами
 	SavePilot(ctx context.Context, pilot *models.Pilot) error
 	GetPilotsInRadius(ctx context.Context, center models.GeoPoint, radiusKM float64) ([]*models.Pilot, error)
+	GetPilot(ctx context.Context, deviceID string) (*models.Pilot, error)
 	UpdatePilotName(ctx context.Context, deviceID string, name string) error
 	DeletePilot(ctx context.Context, deviceID string) error
+	RemovePilot(ctx context.Context, deviceID string) error
 
 	// Операции с термиками
 	SaveThermal(ctx context.Context, thermal *models.Thermal) error
